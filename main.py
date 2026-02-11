@@ -5,10 +5,17 @@ from discord.ext import commands, tasks
 from dotenv import load_dotenv
 from ai_handler import AIHandler
 import datetime
+import logging
+from keep_alive import keep_alive
 
 # Load environment variables
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger('discord')
+logger.setLevel(logging.INFO)
 
 # Initialize Discord bot
 intents = discord.Intents.default()
@@ -249,6 +256,7 @@ async def on_message(message):
 
 if __name__ == "__main__":
     if TOKEN:
+        keep_alive()
         bot.run(TOKEN)
     else:
         print("We will talk later.")
