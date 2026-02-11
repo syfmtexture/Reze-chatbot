@@ -46,23 +46,40 @@ async def on_message(message):
                 await message.reply("hello.")
                 return
 
+            # Extract user info
+            author = message.author
+            name = author.nick or author.display_name or author.name
+            
+            # Identify gender by roles
+            gender = "Unknown"
+            if hasattr(author, 'roles'):
+                role_ids = [role.id for role in author.roles]
+                if 916228722678456320 in role_ids:
+                    gender = "Male"
+                elif 916228772762619974 in role_ids:
+                    gender = "Female"
+
             # Get or initialize channel history
             channel_id = str(message.channel.id)
             if channel_id not in channel_memory:
                 channel_memory[channel_id] = []
 
-            # Get AI response
-            response = await ai.get_ai_response(clean_content, history=channel_memory[channel_id][-5:]) # Context of last 5 messages
+            # Format the current message with metadata for the AI's perspective
+            formatted_user_message = f"[{name}] ({gender}): {clean_content}"
 
-            # Update memory
-            channel_memory[channel_id].append({"role": "user", "content": clean_content})
+            # Get AI response
+            # Note: The history stored already contains formatted strings
+            response = await ai.get_ai_response(formatted_user_message, history=channel_memory[channel_id][-5:])
+
+            # Update memory with formatted strings to maintain context of who said what
+            channel_memory[channel_id].append({"role": "user", "content": formatted_user_message})
             channel_memory[channel_id].append({"role": "assistant", "content": response})
             
             # Keep memory lean
             if len(channel_memory[channel_id]) > 10:
                 channel_memory[channel_id] = channel_memory[channel_id][-10:]
 
-            # Send response as a single message (handling Discord's 2000-character limit)
+            # Send response
             if len(response) > 2000:
                 for i in range(0, len(response), 2000):
                     await message.reply(response[i:i+2000])
