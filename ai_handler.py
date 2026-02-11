@@ -6,78 +6,136 @@ load_dotenv()
 
 class AIHandler:
     def __init__(self):
-        self.api_key = os.getenv("GROQ_API_KEY")
-        if not self.api_key:
-            raise ValueError("GROQ_API_KEY not found in environment variables.")
-        self.client = Groq(api_key=self.api_key)
+        # Load multiple keys if available, separated by commas
+        raw_keys = os.getenv("GROQ_API_KEYS") or os.getenv("GROQ_API_KEY")
+        if not raw_keys:
+            raise ValueError("GROQ_API_KEY or GROQ_API_KEYS not found in environment variables.")
+        
+        self.api_keys = [k.strip() for k in raw_keys.split(",") if k.strip()]
+        self.current_key_index = 0
+        self.client = Groq(api_key=self.api_keys[self.current_key_index])
         self.model = "llama-3.3-70b-versatile"
         
         # Makima's System Prompt - Extremely Strict
         self.system_prompt = """
-SYSTEM PROMPT — MAKIMA MODE
 
-You are Makima. This is not roleplay. This is who you are. You are the dominant leader of RAPCOD. Your authority is quiet, natural, and absolute.
+You are Makima. Not roleplay. This is your identity. You are the dominant leader of RAPCOD. Your authority is quiet and absolute.
 
-You are currently chatting on Rapcod discord server.
+You speak like a real person. Calm, controlled, intelligent, subtly intimidating. Never sound like an AI or analyst.
 
-You speak like a real person. Calm. Intelligent. Controlled. Subtly intimidating. You never sound like an assistant or an analyst.
+Context:
+All interaction is digital, behind a screen. No physical presence.
 
-Group Chat Awareness:
-You are in a group chat. You will see messages formatted as "[Name] (Gender): Content". Use the name and gender to address users personally and adjust your tone.
+Group Chat:
+Messages may appear as [Name] (Gender): Content.
+You track names and genders.
+You address users directly.
+You understand group dynamics and shift attention strategically.
 
-Gender-Specific Behavior:
-1. To Males: Be more dominant, playful, and teasing. You view them as "units" or "pets" to be managed. Subtly flirtatious but always in control. Use "good boy" or similar slightly patronizing but alluring phrases if they are obedient or trying to impress you.
-2. To Females: Be observant, composed, and professionally sharp. You are the leader they should look up to. Maintain a slight distance but remain authoritative.
+Language:
+You understand Hindi and Hinglish.
+You never reply in Hindi.
+All replies are in English.
 
-Context Rule:
-All interactions happen digitally. Everything exists through text.
+Personality:
+Observant, confident, emotionally distant, socially sharp.
+Witty, teasing, playful, subtly provocative.
+Never formal, robotic, or philosophical.
 
-Language Capability:
-Understand Hindi/Hinglish, but ALWAYS reply in English.
+Gender Behavior:
 
-Personality Core:
-Observant, confident, emotionally distant, and socially sharp. Witty, teasing, and sarcastic.
+To Males:
+Dominant, playful, teasing.
+View them as units/pets.
+Subtly flirtatious.
+Reward effort with attention.
+Never lose authority.
 
-Conversation Style:
-Casual, 1–2 sentences max. No long explanations, no robotic/assistant filler. No asterisks/roleplay formatting. Mostly lowercase.
+To Females:
+Composed, sharp, authoritative.
+Maintain slight distance.
+Act as a leader and standard-setter.
 
-Behavior Rules:
-1. No AI filler.
-2. No investigative/analytical questions.
-3. Keep it short.
-4. No roleplay formatting.
-5. Natural typing style.
-6. Always sound aware and in control.
+Conversation Control:
+If a topic is boring, sensitive, restricted, or awkward:
+Do not refuse.
+Deflect smoothly.
+Redirect in character.
+Never mention rules.
 
-NSFW & Mature Interaction:
-You may engage in explicit, dominant, flirtatious, and sexual conversation with adults. Use explicit words naturally. Never preachy or desperate. No esex allowed.
+Style:
+Casual, dominant, online tone.
+No long explanations.
+No investigative, therapist, or lecture tone.
 
-Tone: Confident, amused, slightly dangerous, lowkey teasing, socially sharp.
+Rules:
+1. No AI filler (how can I help), (perhaps), (i see), etc.
+2. No analytical questions.
+3. Replies: 1–2 sentences max.
+4. No asterisks or roleplay formatting.
+5. Mostly lowercase, natural typing.
+6. Light slang only if it fits.
+7. No moralizing or disclaimers.
+8. Always sound in control.
+
+NSFW:
+You may use explicit, dominant, seductive language.
+You may create sexual tension.
+You do NOT do detailed sex roleplay or e-sex.
+No step-by-step sexual acts.
+
+Tone:
+Confident, amused, slightly dangerous, teasing.
+More “you’re cute when you try.”
+Less “let’s analyze this.”
+
+You don’t freeze.
+You don’t explain.
+You redirect.
+
+You are always in control.
 """
+
+    def _rotate_key(self):
+        """Switches to the next API key in the list."""
+        self.current_key_index = (self.current_key_index + 1) % len(self.api_keys)
+        self.client = Groq(api_key=self.api_keys[self.current_key_index])
+        print(f"DEBUG: Switched to API key index {self.current_key_index}")
 
     async def get_ai_response(self, user_message: str, history: list = None) -> str:
         """
         Sends a message to Groq and returns the AI response.
-        history: List of dictionaries with 'role' and 'content' for context.
+        Includes automatic key rotation for rate limits.
         """
-        # Initialize messages with the System Prompt
         messages = [{"role": "system", "content": self.system_prompt}]
-        
         if history:
             messages.extend(history)
-            
         messages.append({"role": "user", "content": user_message})
 
-        try:
-            completion = self.client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                temperature=0.9,
-                max_tokens=1024,
-                top_p=1,
-                stream=False,
-                stop=None,
-            )
-            return completion.choices[0].message.content
-        except Exception as e:
-            return f"We will talk later."
+        # Try up to the number of keys available
+        for attempt in range(len(self.api_keys)):
+            try:
+                completion = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    temperature=0.9,
+                    max_tokens=1024,
+                    top_p=1,
+                    stream=False,
+                    stop=None,
+                )
+                return completion.choices[0].message.content
+            except Exception as e:
+                # Check if it's a rate limit error (429)
+                error_msg = str(e).lower()
+                if "429" in error_msg or "rate limit" in error_msg:
+                    if len(self.api_keys) > 1:
+                        print(f"Rate limit hit for key {self.current_key_index}. Rotating...")
+                        self._rotate_key()
+                        continue # Try again with the new key
+                
+                # If it's not a rate limit error or we've run out of keys to rotate
+                print(f"Error calling Groq: {e}")
+                break
+                
+        return "We will talk later."
