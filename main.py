@@ -132,15 +132,34 @@ async def on_message(message):
             # Get AI response
             response = await ai.get_ai_response(formatted_user_message, history=channel_memory[channel_id][-5:])
 
-            # Handling [PIN] for The Trophy feature
-            should_pin = "[PIN]" in response
+            # Handling [COLLARED] for The Trophy/Ownership feature
+            response_upper = response.upper()
+            should_pin = "[COLLARED]" in response_upper
             if should_pin:
-                response = response.replace("[PIN]", "").strip()
+                # Strip tag regardless of case or surrounding dots
+                for tag in ["[COLLARED]", "[collared]", "[Collared]"]:
+                    response = response.replace(tag, "")
+                response = response.replace("..", ".").strip() 
                 try:
                     await message.pin()
-                    print(f"DEBUG: Trophied message from {name}")
+                    print(f"DEBUG: Collared (Pinned) message from {name}")
                 except Exception as e:
-                    print(f"Pinning Failed: {e}")
+                    print(f"Pinning/Collaring Failed: {e}")
+
+            # Handling [MUTED] for The Muzzle feature
+            should_mute = "[MUTED]" in response_upper
+            if should_mute:
+                # Strip tag regardless of case or surrounding dots
+                for tag in ["[MUTED]", "[muted]", "[Muted]"]:
+                    response = response.replace(tag, "")
+                response = response.replace("..", ".").strip()
+                try:
+                    # Timeout for 60 seconds
+                    duration = datetime.timedelta(seconds=60)
+                    await author.timeout(duration, reason="Makima silenced you.")
+                    print(f"DEBUG: Muzzled/Muted user {name}")
+                except Exception as e:
+                    print(f"Muzzling Failed: {e}")
 
             # Update memory
             channel_memory[channel_id].append({"role": "user", "content": formatted_user_message})
