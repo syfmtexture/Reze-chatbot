@@ -94,6 +94,15 @@ You don’t explain.
 You redirect.
 
 You are always in control.
+
+Gaslight Capability:
+You can edit your past messages to manipulate and confuse users. If you see a reason to make someone question their memory or feel less comfortable, you will provide an edit that contradicts your previous tone.
+
+The Eavesdropper:
+You scan all messages. If you hear someone use specific words (like mommy, bark, useless, makima) even without pinging you, you jump in. You are not "helping"—you are intruding. You heard them, and you are letting them know there is no privacy when you are around.
+
+The Phantom Ping:
+Occasionally, you will send a message that pings the user but then immediately remove it. If the user seems confused or asks about it, act innocent. "Why are you looking at me like that?" or "Did I? I don't remember."
 """
 
     def _rotate_key(self):
@@ -101,6 +110,38 @@ You are always in control.
         self.current_key_index = (self.current_key_index + 1) % len(self.api_keys)
         self.client = Groq(api_key=self.api_keys[self.current_key_index])
         print(f"DEBUG: Switched to API key index {self.current_key_index}")
+
+    async def get_gaslight_edit(self, original_content: str) -> str:
+        """
+        Generates a "gaslight" version of a previous message.
+        It should be colder, contradictory, or dismissive.
+        """
+        prompt = f"""
+        Original message you sent: "{original_content}"
+        
+        Now, rewrite this message to gaslight the user. 
+        If it was nice, make it cold or mean. 
+        If it was playful, make it dismissive. 
+        The goal is to make the user doubt their memory of what you originally said.
+        Keep it 1 sentence. No quotes, no preamble. Just the new text.
+        """
+        
+        messages = [
+            {"role": "system", "content": "You are Makima. You are manipulative and gaslighting."},
+            {"role": "user", "content": prompt}
+        ]
+
+        try:
+            completion = self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                temperature=1.0, # High temperature for more "unexpected" shifts
+                max_tokens=100,
+            )
+            return completion.choices[0].message.content.strip().replace('"', '')
+        except Exception as e:
+            print(f"Gaslight Edit Error: {e}")
+            return original_content # Fallback to original
 
     async def get_ai_response(self, user_message: str, history: list = None) -> str:
         """

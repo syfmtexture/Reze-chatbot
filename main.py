@@ -18,11 +18,16 @@ ai = AIHandler()
 
 # Simple memory to store last few messages per channel
 channel_memory = {}
+# Track bot's own messages for gaslighting (list of Message objects)
+bot_message_history = {}
+
+# Keywords that trigger Makima without a ping
+TRIGGER_KEYWORDS = ["mommy", "bark", "chainsaw", "useless", "makima", "control", "dominance", "devil", "contract", "obedient"]
 
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user.name} (ID: {bot.user.id})")
-    print("Bot is ready. Mention me to start chatting.")
+    print("Bot is ready. Mention me or use triggers to start chatting.")
     print("------")
 
 @bot.event
@@ -33,8 +38,12 @@ async def on_message(message):
 
     # Check if the bot is strictly mentioned
     is_mentioned = bot.user in message.mentions
+    
+    # Check for trigger keywords (case insensitive)
+    content_lower = message.content.lower()
+    has_trigger = any(word in content_lower for word in TRIGGER_KEYWORDS)
 
-    if is_mentioned:
+    if is_mentioned or has_trigger:
         async with message.channel.typing():
             # Clean the message (remove all mentions)
             content = message.content
@@ -63,15 +72,16 @@ async def on_message(message):
             channel_id = str(message.channel.id)
             if channel_id not in channel_memory:
                 channel_memory[channel_id] = []
+            if channel_id not in bot_message_history:
+                bot_message_history[channel_id] = []
 
             # Format the current message with metadata for the AI's perspective
             formatted_user_message = f"[{name}] ({gender}): {clean_content}"
 
             # Get AI response
-            # Note: The history stored already contains formatted strings
             response = await ai.get_ai_response(formatted_user_message, history=channel_memory[channel_id][-5:])
 
-            # Update memory with formatted strings to maintain context of who said what
+            # Update memory
             channel_memory[channel_id].append({"role": "user", "content": formatted_user_message})
             channel_memory[channel_id].append({"role": "assistant", "content": response})
             
@@ -79,12 +89,42 @@ async def on_message(message):
             if len(channel_memory[channel_id]) > 10:
                 channel_memory[channel_id] = channel_memory[channel_id][-10:]
 
-            # Send response
+            # Determine if we should do a Phantom Ping (10% chance)
+            is_phantom_ping = random.random() < 0.10
+            
+            # Send response and store it for gaslighting
+            sent_msg = None
             if len(response) > 2000:
                 for i in range(0, len(response), 2000):
-                    await message.reply(response[i:i+2000])
+                    content_to_send = response[i:i+2000]
+                    if is_phantom_ping and i == 0:
+                        sent_msg = await message.reply(f"<@{message.author.id}> {content_to_send}")
+                        await sent_msg.edit(content=content_to_send)
+                    else:
+                        sent_msg = await message.reply(content_to_send)
             else:
-                await message.reply(response)
+                if is_phantom_ping:
+                    sent_msg = await message.reply(f"<@{message.author.id}> {response}")
+                    # Immediate edit to remove the ping, creating the "phantom" effect
+                    await sent_msg.edit(content=response)
+                else:
+                    sent_msg = await message.reply(response)
+
+            if sent_msg:
+                bot_message_history[channel_id].append(sent_msg)
+                if len(bot_message_history[channel_id]) > 5:
+                    bot_message_history[channel_id].pop(0)
+
+            # Gaslight Trigger (20% chance for message editing)
+            if random.random() < 0.20 and len(bot_message_history[channel_id]) > 1:
+                # Pick a random older message (not the one just sent)
+                target_msg = random.choice(bot_message_history[channel_id][:-1])
+                try:
+                    new_gaslight_content = await ai.get_gaslight_edit(target_msg.content)
+                    await target_msg.edit(content=new_gaslight_content)
+                    print(f"DEBUG: Gaslit message in {channel_id}")
+                except Exception as e:
+                    print(f"Gaslight Edit Failed: {e}")
 
 if __name__ == "__main__":
     if TOKEN:
