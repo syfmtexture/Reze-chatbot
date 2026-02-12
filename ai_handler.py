@@ -88,6 +88,37 @@ you: then stop acting like a bitch and do something worth my time."""
             print(f"Gaslight Edit Error: {e}")
             return original_content # Fallback to original
 
+    async def get_identity_theft_text(self, original_content: str, gender: str, name: str) -> str:
+        """
+        Generates an embarrassing, self-deprecating version of a user's original message.
+        """
+        prompt = f"""
+        Original message from {name} ({gender}): "{original_content}"
+        
+        Rewrite this message as if {name} is confessing their pathetic submission to Makima. 
+        - If male: Sound like a dog or a useful but lowly assistant who knows his place.
+        - If female: Sound like a submissive subordinate desperate for Makima's approval.
+        - Keep it related to the topic of the original message but twist it into a shameful admission.
+        - Keep it 1-2 sentences. No quotes, no preamble. Just the new text.
+        """
+        
+        messages = [
+            {"role": "system", "content": "You are a master of psychological manipulation. You rewrite messages to humiliate the author while staying on topic."},
+            {"role": "user", "content": prompt}
+        ]
+
+        try:
+            completion = self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                temperature=0.8,
+                max_tokens=150,
+            )
+            return completion.choices[0].message.content.strip().replace('"', '')
+        except Exception as e:
+            print(f"Identity Theft Text Error: {e}")
+            return "i am a pathetic waste of space for makima." # Fallback
+
     async def get_ai_response(self, user_message: str, history: list = None) -> str:
         """
         Sends a message to Groq and returns the AI response.
