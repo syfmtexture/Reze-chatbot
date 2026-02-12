@@ -33,8 +33,6 @@ channel_memory = {}
 bot_message_history = {}
 # Track users she has talked to (for Phantom DMs)
 active_users = {} # {user_id: {"name": str, "gender": str, "last_seen": datetime}}
-# Track muzzle cooldowns to prevent spamming punishments
-muzzle_cooldowns = {} # {user_id: datetime}
 
 # Keywords that trigger Makima without a ping
 TRIGGER_KEYWORDS = ["mommy", "bark", "chainsaw", "useless", "makima", "control", "dominance", "devil", "contract", "obedient"]
@@ -141,56 +139,6 @@ async def on_message(message):
             # Get AI response
             response = await ai.get_ai_response(formatted_user_message, history=channel_memory[channel_id][-5:])
 
-            # Handling [COLLARED] for The Trophy/Ownership feature
-            response_upper = response.upper()
-            should_pin = "[COLLARED]" in response_upper
-            if should_pin:
-                # Strip tag regardless of case or surrounding dots
-                for tag in ["[COLLARED]", "[collared]", "[Collared]"]:
-                    response = response.replace(tag, "")
-                response = response.replace("..", ".").strip() 
-                
-                # Role-based restriction: Only pin if author has role 1191009428493832273
-                has_collar_role = False
-                if hasattr(author, 'roles'):
-                    role_ids = [role.id for role in author.roles]
-                    if 1191009428493832273 in role_ids:
-                        has_collar_role = True
-                
-                if has_collar_role:
-                    try:
-                        await message.pin()
-                        print(f"DEBUG: Collared (Pinned) message from {name}")
-                    except Exception as e:
-                        print(f"Pinning/Collaring Failed: {e}")
-                else:
-                    print(f"DEBUG: Collar suppressed (User {name} lacks required role)")
-
-            # Handling [MUTED] for The Muzzle feature
-            should_mute = "[MUTED]" in response_upper
-            if should_mute:
-                # Strip tag regardless of case or surrounding dots
-                for tag in ["[MUTED]", "[muted]", "[Muted]"]:
-                    response = response.replace(tag, "")
-                response = response.replace("..", ".").strip()
-                
-                # Check cooldown (10 minutes)
-                now = datetime.datetime.now()
-                user_id = str(author.id)
-                if user_id in muzzle_cooldowns:
-                    if (now - muzzle_cooldowns[user_id]).total_seconds() < 600: # 10 minutes
-                        should_mute = False
-                        print(f"DEBUG: Muzzle suppressed due to cooldown for {name}")
-
-                if should_mute:
-                    try:
-                        # Timeout for 60 seconds
-                        duration = datetime.timedelta(seconds=60)
-                        await author.timeout(duration, reason="Makima silenced you.")
-                        muzzle_cooldowns[user_id] = now
-                        print(f"DEBUG: Muzzled/Muted user {name}")
-                    except Exception as e:
-                        print(f"Muzzling Failed: {e}")
 
             # Update memory
             channel_memory[channel_id].append({"role": "user", "content": formatted_user_message})
