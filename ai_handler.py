@@ -166,11 +166,6 @@ The goal: be so intoxicating they forget you're dangerous until it's too late. a
                         max_tokens=max_tokens,
                     )
                     
-                    # If we successfully used a fallback model, update self.model permanently
-                    if current_model != requested_model and model is None:
-                        self.model = current_model
-                        print(f"DEBUG: All keys rate limited for {requested_model}. Permanent fallback to {self.model}")
-                        
                     return self._clean_response(completion.choices[0].message.content)
                 except Exception as e:
                     error_msg = str(e).lower()
