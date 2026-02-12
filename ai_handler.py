@@ -1,4 +1,5 @@
 import os
+import re
 from groq import Groq
 from dotenv import load_dotenv
 
@@ -142,26 +143,57 @@ The goal: be so intoxicating they forget you're dangerous until it's too late. a
         self.client = Groq(api_key=self.api_keys[self.current_key_index])
         print(f"DEBUG: Rotated to API key index {self.current_key_index}")
 
+    def _clean_response(self, text: str) -> str:
+        """Removes <think>...</think> blocks from the response."""
+        if not text:
+            return text
+        # Remove <think>...</think> blocks
+        cleaned = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
+        return cleaned.strip()
+
     async def _make_groq_call(self, messages: list, model: str = None, temperature: float = 0.8, max_tokens: int = 1024) -> str:
-        """Centralized Groq call handler with automatic key rotation."""
-        model = model or self.model
-        for attempt in range(len(self.api_keys)):
-            try:
-                completion = self.client.chat.completions.create(
-                    model=model,
-                    messages=messages,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                )
-                return completion.choices[0].message.content
-            except Exception as e:
-                error_msg = str(e).lower()
-                if ("429" in error_msg or "rate limit" in error_msg) and len(self.api_keys) > 1:
-                    print(f"Rate limit hit for key {self.current_key_index}. Rotating...")
-                    self._rotate_key()
-                    continue
-                print(f"Groq API Error: {e}")
-                break
+        """Centralized Groq call handler with automatic key rotation and model fallback."""
+        requested_model = model or self.model
+        models_to_try = [requested_model]
+        
+        # Add fallback if the primary model is the one specified by the user
+        if requested_model == "llama-3.3-70b-versatile":
+            models_to_try.append("qwen/qwen3-32b")
+            
+        for current_model in models_to_try:
+            for attempt in range(len(self.api_keys)):
+                try:
+                    completion = self.client.chat.completions.create(
+                        model=current_model,
+                        messages=messages,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                    )
+                    
+                    # If we successfully used a fallback model, update self.model permanently
+                    if current_model != requested_model and model is None:
+                        self.model = current_model
+                        print(f"DEBUG: All keys rate limited for {requested_model}. Permanent fallback to {self.model}")
+                        
+                    return self._clean_response(completion.choices[0].message.content)
+                except Exception as e:
+                    error_msg = str(e).lower()
+                    if "429" in error_msg or "rate limit" in error_msg:
+                        if attempt < len(self.api_keys) - 1:
+                            print(f"Rate limit hit for key {self.current_key_index}. Rotating...")
+                            self._rotate_key()
+                            continue
+                        else:
+                            # Hit rate limit on all keys for this model
+                            if current_model != models_to_try[-1]:
+                                print(f"All keys rate limited for {current_model}. Trying fallback model...")
+                                break # Exit inner loop to try next model
+                            else:
+                                print(f"All keys and models rate limited: {e}")
+                                return None
+                    else:
+                        print(f"Groq API Error: {e}")
+                        return None
         return None
 
     async def get_identity_theft_text(self, original_content: str, gender: str, name: str) -> str:

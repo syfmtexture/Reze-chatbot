@@ -68,7 +68,7 @@ async def on_message(message):
     # Resolve mentions to @display_names for AI context
     content = message.content
     for mention in message.mentions:
-        mention_name = mention.nick or mention.display_name or mention.name
+        mention_name = mention.display_name
         content = content.replace(f"<@{mention.id}>", f"@{mention_name}").replace(f"<@!{mention.id}>", f"@{mention_name}")
     clean_content = content.strip()
     
@@ -77,7 +77,7 @@ async def on_message(message):
 
     # Extract author details
     author = message.author
-    name = author.nick or author.display_name or author.name
+    name = author.display_name
     user_id = str(author.id)
     channel_id = str(message.channel.id)
 
