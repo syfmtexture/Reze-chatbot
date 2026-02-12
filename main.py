@@ -27,9 +27,11 @@ bot = discord.Client(intents=intents)
 # Initialize AI Handler
 ai = AIHandler()
 
-# Simple memory to store last few messages per channel
+# Track last few messages per channel (50 turns = 100 entries)
 channel_memory = {}
-# Track bot's own messages for gaslighting (list of Message objects)
+# Track last 10 messages for each user (individual memory)
+user_memory = {}
+# Track bot's own messages for gaslighting
 bot_message_history = {}
 # Track users she has talked to (for Phantom DMs)
 active_users = {} # {user_id: {"name": str, "gender": str, "last_seen": datetime}}
@@ -40,41 +42,20 @@ TRIGGER_KEYWORDS = ["mommy", "bark", "chainsaw", "useless", "makima", "control",
 @tasks.loop(minutes=30)
 async def phantom_dm_task():
     """Background task for 3am check-ins."""
-    now = datetime.datetime.now()
-    # Only run between 2am and 5am
-    if 2 <= now.hour <= 5:
-        print("DEBUG: Phantom DM window open. Checking for targets...")
-        for user_id, info in list(active_users.items()):
-            # Small chance to DM a user she saw in the last 24 hours
-            if random.random() < 0.15 and (now - info["last_seen"]).days < 1:
-                try:
-                    user = await bot.fetch_user(int(user_id))
-                    if user:
-                        # Gender-based obsession hooks
-                        if info["gender"] == "Male":
-                            msg = random.choice(["Are u awake?", "I was thinking about how u sounded earlier.", "Good boys should be sleeping, shouldn't they?"])
-                        else:
-                            msg = random.choice(["Are you awake?", "I found myself thinking about you.", "I'm still awake. Are you?"])
-                        
-                        await user.send(msg)
-                        print(f"DEBUG: Sent Phantom DM to {info['name']}")
-                        # Remove from active list to avoid spamming the same night
-                        del active_users[user_id]
-                except Exception as e:
-                    print(f"Phantom DM Error to {user_id}: {e}")
+    # Note: User requested "no dms", so we skip this if they want zero DM interaction.
+    # For now, I'll leave the task running but it won't trigger if active_users is filtered.
+    return 
 
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user.name} (ID: {bot.user.id})")
     print("Bot is ready. Mention me or use triggers to start chatting.")
     print("------")
-    if not phantom_dm_task.is_running():
-        phantom_dm_task.start()
 
 @bot.event
 async def on_message(message):
-    # Ignore messages from the bot itself
-    if message.author == bot.user:
+    # Ignore messages from the bot or if not in a guild (No DMs)
+    if message.author == bot.user or message.guild is None:
         return
 
     # Check if the bot is strictly mentioned
@@ -86,7 +67,7 @@ async def on_message(message):
 
     if is_mentioned or has_trigger:
         async with message.channel.typing():
-            # Clean the message (remove all mentions)
+            # Clean the message
             content = message.content
             for mention in message.mentions:
                 content = content.replace(f"<@{mention.id}>", "").replace(f"<@!{mention.id}>", "")
@@ -99,6 +80,7 @@ async def on_message(message):
             # Extract user info
             author = message.author
             name = author.nick or author.display_name or author.name
+            user_id = str(author.id)
             
             # Identify gender by roles
             gender = "Unknown"
@@ -109,16 +91,9 @@ async def on_message(message):
                 elif 916228772762619974 in role_ids:
                     gender = "Female"
 
-            # Track for Phantom DMs
-            active_users[str(author.id)] = {
-                "name": name,
-                "gender": gender,
-                "last_seen": datetime.datetime.now()
-            }
-
             # Device Stalking (Presence detection)
             client_status = "Unknown"
-            if hasattr(author, 'status'): # Only works if in the same guild and intents enabled
+            if hasattr(author, 'status'):
                 if author.mobile_status != discord.Status.offline:
                     client_status = "Mobile"
                 elif author.desktop_status != discord.Status.offline:
@@ -126,27 +101,38 @@ async def on_message(message):
                 elif author.web_status != discord.Status.offline:
                     client_status = "Web"
 
-            # Get or initialize channel history
+            # Get or initialize memory
             channel_id = str(message.channel.id)
             if channel_id not in channel_memory:
                 channel_memory[channel_id] = []
             if channel_id not in bot_message_history:
                 bot_message_history[channel_id] = []
+            if user_id not in user_memory:
+                user_memory[user_id] = []
 
-            # Format the current message with metadata (including Device info)
+            # Update User Memory (Last 10 messages)
+            user_memory[user_id].append(clean_content)
+            user_memory[user_id] = user_memory[user_id][-10:]
+
+            # Format the current message
             formatted_user_message = f"[{name}] ({gender}) [Device: {client_status}]: {clean_content}"
 
-            # Get AI response
-            response = await ai.get_ai_response(formatted_user_message, history=channel_memory[channel_id][-5:])
+            # Get AI response with increased context (last 50 turns = 100 messages)
+            # We also pass a summary of the individual's last 10 messages to "know" them better
+            personal_context = f"| Note: {name}'s last few words: {', '.join(user_memory[user_id][-3:])}"
+            
+            response = await ai.get_ai_response(
+                formatted_user_message + personal_context, 
+                history=channel_memory[channel_id][-100:]
+            )
 
-
-            # Update memory
+            # Update channel memory
             channel_memory[channel_id].append({"role": "user", "content": formatted_user_message})
             channel_memory[channel_id].append({"role": "assistant", "content": response})
             
-            # Keep memory lean
-            if len(channel_memory[channel_id]) > 10:
-                channel_memory[channel_id] = channel_memory[channel_id][-10:]
+            # Keep memory lean (100 entries = 50 messages)
+            if len(channel_memory[channel_id]) > 100:
+                channel_memory[channel_id] = channel_memory[channel_id][-100:]
 
             # Determine if we should do a Phantom Ping (10% chance)
             is_phantom_ping = random.random() < 0.10
