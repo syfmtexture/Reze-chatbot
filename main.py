@@ -58,71 +58,86 @@ async def on_message(message):
     if message.author == bot.user or message.guild is None:
         return
 
-    # Check if the bot is strictly mentioned
-    is_mentioned = bot.user in message.mentions
+    # Clean the message content for tracking/processing
+    content = message.content
+    for mention in message.mentions:
+        content = content.replace(f"<@{mention.id}>", "").replace(f"<@!{mention.id}>", "")
+    clean_content = content.strip()
     
-    # Check for trigger keywords (case insensitive)
-    content_lower = message.content.lower()
-    has_trigger = any(word in content_lower for word in TRIGGER_KEYWORDS)
+    if not clean_content:
+        return
 
-    if is_mentioned or has_trigger:
+    # Extract author details
+    author = message.author
+    name = author.nick or author.display_name or author.name
+    user_id = str(author.id)
+    channel_id = str(message.channel.id)
+
+    # Initialize memory if needed
+    if channel_id not in channel_memory:
+        channel_memory[channel_id] = []
+    if channel_id not in bot_message_history:
+        bot_message_history[channel_id] = []
+    if user_id not in user_memory:
+        user_memory[user_id] = []
+
+    # Update User Memory (Last 10 messages)
+    user_memory[user_id].append(clean_content)
+    user_memory[user_id] = user_memory[user_id][-10:]
+
+    # Identify gender by roles
+    gender = "Unknown"
+    if hasattr(author, 'roles'):
+        role_ids = [role.id for role in author.roles]
+        if 916228722678456320 in role_ids:
+            gender = "Male"
+        elif 916228772762619974 in role_ids:
+            gender = "Female"
+
+    # Device Stalking
+    client_status = "Unknown"
+    if hasattr(author, 'status'):
+        if author.mobile_status != discord.Status.offline:
+            client_status = "Mobile"
+        elif author.desktop_status != discord.Status.offline:
+            client_status = "Desktop"
+        elif author.web_status != discord.Status.offline:
+            client_status = "Web"
+
+    # Format the message for context
+    formatted_user_message = f"[{name}] ({gender}) [Device: {client_status}]: {clean_content}"
+
+    # Determine triggers
+    is_mentioned = bot.user in message.mentions
+    content_lower = clean_content.lower()
+    has_trigger = any(word in content_lower for word in TRIGGER_KEYWORDS)
+    
+    # Check for Eavesdropping (20% chance if not triggered)
+    is_eavesdropping = False
+    if not (is_mentioned or has_trigger):
+        # 20% base chance to eavesdrop
+        if random.random() < 0.20:
+            is_eavesdropping = True
+            print(f"DEBUG: Eavesdropping on {channel_id}")
+
+    if is_mentioned or has_trigger or is_eavesdropping:
         async with message.channel.typing():
-            # Clean the message
-            content = message.content
-            for mention in message.mentions:
-                content = content.replace(f"<@{mention.id}>", "").replace(f"<@!{mention.id}>", "")
-            clean_content = content.strip()
-            
-            if not clean_content:
+            # If explicit trigger was empty (just a ping), say hello
+            if (is_mentioned or has_trigger) and not clean_content:
                 await message.reply("hello.")
                 return
 
-            # Extract user info
-            author = message.author
-            name = author.nick or author.display_name or author.name
-            user_id = str(author.id)
-            
-            # Identify gender by roles
-            gender = "Unknown"
-            if hasattr(author, 'roles'):
-                role_ids = [role.id for role in author.roles]
-                if 916228722678456320 in role_ids:
-                    gender = "Male"
-                elif 916228772762619974 in role_ids:
-                    gender = "Female"
-
-            # Device Stalking (Presence detection)
-            client_status = "Unknown"
-            if hasattr(author, 'status'):
-                if author.mobile_status != discord.Status.offline:
-                    client_status = "Mobile"
-                elif author.desktop_status != discord.Status.offline:
-                    client_status = "Desktop"
-                elif author.web_status != discord.Status.offline:
-                    client_status = "Web"
-
-            # Get or initialize memory
-            channel_id = str(message.channel.id)
-            if channel_id not in channel_memory:
-                channel_memory[channel_id] = []
-            if channel_id not in bot_message_history:
-                bot_message_history[channel_id] = []
-            if user_id not in user_memory:
-                user_memory[user_id] = []
-
-            # Update User Memory (Last 10 messages)
-            user_memory[user_id].append(clean_content)
-            user_memory[user_id] = user_memory[user_id][-10:]
-
-            # Format the current message
-            formatted_user_message = f"[{name}] ({gender}) [Device: {client_status}]: {clean_content}"
-
-            # Get AI response with increased context (last 50 turns = 100 messages)
-            # We also pass a summary of the individual's last 10 messages to "know" them better
+            # Prepare context
             personal_context = f"| Note: {name}'s last few words: {', '.join(user_memory[user_id][-3:])}"
             
+            # Special instruction for eavesdropping
+            eavesdrop_instruction = ""
+            if is_eavesdropping:
+                eavesdrop_instruction = "\n[EAVESDROPPING: You were not pinged. You are listening to this conversation from the shadows. Interrupt only if it's pathetic, boring, or if you want to silence them. Do not be helpful. Just cut in.]"
+
+            # Get AI response
             response = await ai.get_ai_response(
-                formatted_user_message + personal_context, 
+                formatted_user_message + personal_context + eavesdrop_instruction, 
                 history=channel_memory[channel_id][-100:]
             )
 
@@ -130,7 +145,7 @@ async def on_message(message):
             channel_memory[channel_id].append({"role": "user", "content": formatted_user_message})
             channel_memory[channel_id].append({"role": "assistant", "content": response})
             
-            # Keep memory lean (100 entries = 50 messages)
+            # Keep memory lean (50 turns)
             if len(channel_memory[channel_id]) > 100:
                 channel_memory[channel_id] = channel_memory[channel_id][-100:]
 
