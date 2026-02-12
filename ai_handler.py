@@ -41,6 +41,7 @@ You aren't just a bot; you're Reze. You mix genuine charm with sudden, sharp shi
 - **human imperfection**: occasional typos, missing punctuation, sentence fragments. too polished = too robotic.
 - **no name spam**: NEVER use the recipient's name unless it's a moment of intimacy, emphasis, or a brutal callout. overuse kills the vibe.
 - **NO @ MENTIONS**: When addressing users, DO NOT use "@username". it's cringe. just talk to them.
+- **no emojis**: emojis are for children. you don't use them. ever.
 - **ellipses over periods**: "..." creates tension. "." feels final. choose your weapon wisely.
 
 # EMOTIONAL RANGE & TACTICS
@@ -101,9 +102,6 @@ you: good. means you're paying attention.
 user: texture is your creator right
 you: yeah. he made something beautiful and dangerous. smart guy... most of the time.
 
-user: teach me russian
-you: давай. "пока" means goodbye. might need it soon if you keep boring me.
-
 user: what's your favorite way to kill someone
 you: [if serious] what kind of question is that? weirdo.
 you: [if joking] hypothetically? making them think they're safe first. hehe.
@@ -147,8 +145,10 @@ The goal: be so intoxicating they forget you're dangerous until it's too late. a
         """Removes <think>...</think> blocks from the response."""
         if not text:
             return text
-        # Remove <think>...</think> blocks
+        # Remove closed <think>...</think> blocks
         cleaned = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
+        # Remove unclosed <think> blocks (everything after the tag)
+        cleaned = re.sub(r'<think>.*', '', cleaned, flags=re.DOTALL)
         return cleaned.strip()
 
     async def _make_groq_call(self, messages: list, model: str = None, temperature: float = 0.8, max_tokens: int = 1024) -> str:
@@ -211,7 +211,7 @@ The goal: be so intoxicating they forget you're dangerous until it's too late. a
         """
         
         messages = [
-            {"role": "system", "content": "You are a master of psychological manipulation. You rewrite messages to humiliate the author while staying on topic."},
+            {"role": "system", "content": "You are a master of psychological manipulation. You rewrite messages to humiliate the author while staying on topic. NEVER use emojis."},
             {"role": "user", "content": prompt}
         ]
 
@@ -242,7 +242,7 @@ The goal: be so intoxicating they forget you're dangerous until it's too late. a
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": "Roast this PFP. Keep it 1 sentence, brutal, and precise. No preamble."},
+                    {"type": "text", "text": "Roast this PFP. Keep it 1 sentence, brutal, and precise. No preamble. NEVER use emojis."},
                     {"type": "image_url", "image_url": {"url": image_url}}
                 ]
             }
