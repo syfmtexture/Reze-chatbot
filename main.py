@@ -195,9 +195,16 @@ async def on_message(message):
         if message.mentions:
             target_user = message.mentions[0]
         else:
-            # Default to self if no mention
+            # Default to author if no mention
             target_user = author
-            
+
+        if target_user == bot.user:
+            replies = [
+                
+                "i am the one who does the judging here. don't confuse your privilege with equality."
+            ]
+            await message.reply(random.choice(replies))
+            return
         # 1. Gather User Info
         status = str(target_user.status)
         is_mobile = target_user.is_on_mobile()
