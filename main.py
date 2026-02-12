@@ -62,10 +62,11 @@ async def on_message(message):
     if message.author == bot.user or message.guild is None:
         return
 
-    # Clean the message content for tracking/processing
+    # Resolve mentions to @display_names for AI context
     content = message.content
     for mention in message.mentions:
-        content = content.replace(f"<@{mention.id}>", "").replace(f"<@!{mention.id}>", "")
+        mention_name = mention.nick or mention.display_name or mention.name
+        content = content.replace(f"<@{mention.id}>", f"@{mention_name}").replace(f"<@!{mention.id}>", f"@{mention_name}")
     clean_content = content.strip()
     
     if not clean_content:
@@ -186,6 +187,45 @@ async def on_message(message):
             except Exception as e:
                 print(f"Webhook/Identity Theft Failed: {e}")
                 await message.reply("something went wrong with the reality shift.")
+        return
+
+    # !judge Command - Psychological Profile
+    if clean_content.startswith("!judge"):
+        target_user = None
+        if message.mentions:
+            target_user = message.mentions[0]
+        else:
+            # Default to self if no mention
+            target_user = author
+            
+        # 1. Gather User Info
+        status = str(target_user.status)
+        is_mobile = target_user.is_on_mobile()
+        join_date = target_user.joined_at.strftime("%Y-%m-%d") if target_user.joined_at else "Unknown"
+        
+        roles = [r.name for r in target_user.roles if r.name != "@everyone"]
+        user_info_str = f"Name: {target_user.display_name}\nStatus: {status}\nPlatform: {'Mobile' if is_mobile else 'Desktop'}\nJoined: {join_date}\nRoles: {', '.join(roles)}"
+        
+        # 2. Gather Message History (Last 15 from this user in this channel)
+        history_text = []
+        try:
+            async for msg in message.channel.history(limit=50):
+                if msg.author == target_user and msg.content:
+                    history_text.append(f"{msg.content}")
+                if len(history_text) >= 15:
+                    break
+        except Exception as e:
+            print(f"Error fetching history: {e}")
+            
+        history_str = "\n".join(reversed(history_text))
+        
+        # 3. Get Avatar URL
+        avatar_url = str(target_user.display_avatar.url)
+        
+        # 4. Generate Profile
+        async with message.channel.typing():
+            profile = await ai.get_psychological_profile(user_info_str, history_str, avatar_url)
+            await message.reply(profile)
         return
 
     if is_mentioned or has_trigger or is_eavesdropping:
