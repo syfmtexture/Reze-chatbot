@@ -52,6 +52,9 @@ async def on_ready():
     print("Bot is ready. Mention me or use triggers to start chatting.")
     print("------")
 
+# Track eavesdropping cooldowns {channel_id: datetime}
+eavesdropping_cooldowns = {}
+
 @bot.event
 async def on_message(message):
     # Ignore messages from the bot or if not in a guild (No DMs)
@@ -112,13 +115,18 @@ async def on_message(message):
     content_lower = clean_content.lower()
     has_trigger = any(word in content_lower for word in TRIGGER_KEYWORDS)
     
-    # Check for Eavesdropping (20% chance if not triggered)
+    # Check for Eavesdropping (5% chance if not triggered, with 1hr cooldown)
     is_eavesdropping = False
     if not (is_mentioned or has_trigger):
-        # 20% base chance to eavesdrop
-        if random.random() < 0.20:
-            is_eavesdropping = True
-            print(f"DEBUG: Eavesdropping on {channel_id}")
+        now = datetime.datetime.now()
+        # 5% base chance to eavesdrop
+        if random.random() < 0.05:
+            # Check cooldown
+            if channel_id not in eavesdropping_cooldowns or \
+               (now - eavesdropping_cooldowns[channel_id]).total_seconds() > 3600:
+                is_eavesdropping = True
+                eavesdropping_cooldowns[channel_id] = now
+                print(f"DEBUG: Eavesdropping on {channel_id}")
 
     # !gaslight command: Admin-only nuclear option
     if content_lower.startswith("!gaslight") and message.author.guild_permissions.administrator:
