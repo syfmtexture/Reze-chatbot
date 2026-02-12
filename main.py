@@ -136,43 +136,28 @@ async def on_message(message):
 
             # Determine if we should do a Phantom Ping (10% chance)
             is_phantom_ping = random.random() < 0.10
-            # Determine if we should Whisper (DM instead of channel) (5% chance)
-            is_whisper = random.random() < 0.05
             
             # Send response and store it for gaslighting
             sent_msg = None
             
-            async def send_output(target, text, ping=False):
-                # If target is a User/Member (DM), we use .send()
-                # If target is a Channel, we use message.reply() to maintain the thread/reply chain
-                if isinstance(target, (discord.User, discord.Member)):
-                    return await target.send(text)
-                
+            async def send_output(text, ping=False):
                 if ping:
                     m = await message.reply(f"<@{author.id}> {text}")
                     await m.edit(content=text)
                     return m
                 return await message.reply(text)
 
-            target_destination = message.channel
-            if is_whisper:
-                try:
-                    target_destination = author
-                    print(f"DEBUG: Whisping to {name}")
-                except:
-                    target_destination = message.channel # Fallback if DMs closed
-
             if len(response) > 2000:
                 for i in range(0, len(response), 2000):
                     content_to_send = response[i:i+2000]
                     if is_phantom_ping and i == 0:
-                        sent_msg = await send_output(target_destination, content_to_send, ping=True)
+                        sent_msg = await send_output(content_to_send, ping=True)
                     else:
-                        sent_msg = await send_output(target_destination, content_to_send)
+                        sent_msg = await send_output(content_to_send)
             else:
-                sent_msg = await send_output(target_destination, response, ping=is_phantom_ping)
+                sent_msg = await send_output(response, ping=is_phantom_ping)
 
-            if sent_msg and isinstance(target_destination, discord.TextChannel):
+            if sent_msg:
                 bot_message_history[channel_id].append(sent_msg)
                 if len(bot_message_history[channel_id]) > 5:
                     bot_message_history[channel_id].pop(0)
