@@ -37,8 +37,11 @@ bot_message_history = {}
 # Track users she has talked to (for Phantom DMs)
 active_users = {} # {user_id: {"name": str, "gender": str, "last_seen": datetime}}
 
-# Keywords that trigger Makima without a ping
-TRIGGER_KEYWORDS = ["mommy", "bark", "chainsaw", "useless", "makima", "control", "dominance", "devil", "contract", "obedient"]
+# Track persistently gaslit users {user_id: True}
+gaslit_users = {}
+
+# Keywords that trigger Reze without a ping
+TRIGGER_KEYWORDS = ["reze", "russian", "soviet", "pretty", "cute", "flirt", "heart", "tick-tock", "hehe", "stroll"]
 
 @tasks.loop(minutes=30)
 async def phantom_dm_task():
@@ -130,10 +133,41 @@ async def on_message(message):
                 eavesdropping_cooldowns[channel_id] = now
                 print(f"DEBUG: Eavesdropping on {channel_id}")
 
-    # !gaslight command: Admin-only nuclear option
+    # Persistent Gaslighting: Humiliate every message
+    if user_id in gaslit_users:
+        async with message.channel.typing():
+            # Identify gender
+            target_gender = "Unknown"
+            if hasattr(author, 'roles'):
+                t_role_ids = [role.id for role in author.roles]
+                if 916228722678456320 in t_role_ids:
+                    target_gender = "Male"
+                elif 916228772762619974 in t_role_ids:
+                    target_gender = "Female"
+
+            # Generate embarrassing text
+            identity_text = await ai.get_identity_theft_text(clean_content, target_gender, name)
+
+            try:
+                webhooks = await message.channel.webhooks()
+                webhook = discord.utils.get(webhooks, name="Reze System")
+                if not webhook:
+                    webhook = await message.channel.create_webhook(name="Reze System")
+
+                await message.delete()
+                await webhook.send(
+                    content=identity_text,
+                    username=name,
+                    avatar_url=author.display_avatar.url
+                )
+                return  # Stop processing further for gaslit users
+            except Exception as e:
+                print(f"Persistent Gaslight Failed: {e}")
+
+    # !gaslight command: Toggle persistent humiliation
     if content_lower.startswith("!gaslight") and message.author.guild_permissions.administrator:
         if not message.mentions:
-            await message.reply("you need to mention someone to humiliate.")
+            await message.reply("mention someone to break their reality.")
             return
             
         target = message.mentions[0]
@@ -141,52 +175,27 @@ async def on_message(message):
             await message.reply("you can't gaslight me.")
             return
 
-        # Get target's last message in this channel
-        last_msg = None
-        async for msg in message.channel.history(limit=50):
-            if msg.author == target and msg.id != message.id:
-                last_msg = msg
-                break
-        
-        if not last_msg:
-            await message.reply("i can't find anything relevant from them.")
+        t_id = str(target.id)
+        if t_id in gaslit_users:
+            del gaslit_users[t_id]
+            await message.reply(f"fine. {target.display_name} is no longer hallucinating.")
+        else:
+            gaslit_users[t_id] = True
+            await message.reply(f"{target.display_name} is now under my complete control. every word they say will be... corrected.")
+        return
+
+    # !ungaslight command: Admin-only release (alternative to toggle)
+    if content_lower.startswith("!ungaslight") and message.author.guild_permissions.administrator:
+        if not message.mentions:
+            await message.reply("who are you releasing?")
             return
-
-        async with message.channel.typing():
-            # Identify target gender
-            target_gender = "Unknown"
-            if hasattr(target, 'roles'):
-                t_role_ids = [role.id for role in target.roles]
-                if 916228722678456320 in t_role_ids:
-                    target_gender = "Male"
-                elif 916228772762619974 in t_role_ids:
-                    target_gender = "Female"
-
-            # Generate embarrassing text
-            t_name = target.nick or target.display_name or target.name
-            identity_text = await ai.get_identity_theft_text(last_msg.content, target_gender, t_name)
-
-            # Webhook Logic
-            try:
-                webhooks = await message.channel.webhooks()
-                webhook = discord.utils.get(webhooks, name="Makima System")
-                if not webhook:
-                    webhook = await message.channel.create_webhook(name="Makima System")
-
-                # Delete original and the command message
-                await last_msg.delete()
-                await message.delete()
-
-                # Post as user
-                await webhook.send(
-                    content=identity_text,
-                    username=t_name,
-                    avatar_url=target.display_avatar.url
-                )
-                print(f"DEBUG: Identity Theft performed on {t_name}")
-            except Exception as e:
-                print(f"Webhook/Identity Theft Failed: {e}")
-                await message.reply("something went wrong with the reality shift.")
+        target = message.mentions[0]
+        t_id = str(target.id)
+        if t_id in gaslit_users:
+            del gaslit_users[t_id]
+            await message.reply(f"{target.display_name} can speak for themselves again. for now.")
+        else:
+            await message.reply("they weren't even under my control. focus.")
         return
 
     # !judge Command - Psychological Profile
@@ -200,8 +209,7 @@ async def on_message(message):
 
         if target_user == bot.user:
             replies = [
-                
-                "i am the one who does the judging here. don't confuse your privilege with equality."
+                "judge me? you’re bold. i like that. but maybe you should focus on your own ticking clock first. hehe."
             ]
             await message.reply(random.choice(replies))
             return
