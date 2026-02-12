@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from ai_handler import AIHandler
 import datetime
 import logging
+import asyncio
 from keep_alive import keep_alive
 
 # Load environment variables
@@ -219,30 +220,37 @@ async def on_message(message):
             # Determine if we should do a Phantom Ping (10% chance)
             is_phantom_ping = random.random() < 0.10
             
-            # Send response and store it for gaslighting
-            sent_msg = None
+            # Split response into chunks for natural delivery
+            # Split by double newlines or just use the whole thing if short
+            chunks = [c.strip() for c in response.split('\n\n') if c.strip()]
+            if not chunks:
+                chunks = [response.strip()]
+
+            # Determine if we should do a Phantom Ping (10% chance)
+            is_phantom_ping = random.random() < 0.10
             
-            async def send_output(text, ping=False):
-                if ping:
-                    m = await message.reply(f"<@{author.id}> {text}")
-                    await m.edit(content=text)
-                    return m
-                return await message.reply(text)
-
-            if len(response) > 2000:
-                for i in range(0, len(response), 2000):
-                    content_to_send = response[i:i+2000]
-                    if is_phantom_ping and i == 0:
-                        sent_msg = await send_output(content_to_send, ping=True)
+            sent_msg = None
+            for i, chunk in enumerate(chunks):
+                if i == 0:
+                    # First message is a reply
+                    if is_phantom_ping:
+                        sent_msg = await message.reply(f"<@{author.id}> {chunk}")
+                        await sent_msg.edit(content=chunk)
                     else:
-                        sent_msg = await send_output(content_to_send)
-            else:
-                sent_msg = await send_output(response, ping=is_phantom_ping)
+                        sent_msg = await message.reply(chunk)
+                else:
+                    # Subsequent messages are normal channel sends
+                    # Small delay for realism
+                    await asyncio.sleep(random.uniform(0.5, 1.2))
+                    sent_msg = await message.channel.send(chunk)
+                
+                # Store sent message for history tracking
+                if sent_msg:
+                    bot_message_history[channel_id].append(sent_msg)
 
-            if sent_msg:
-                bot_message_history[channel_id].append(sent_msg)
-                if len(bot_message_history[channel_id]) > 5:
-                    bot_message_history[channel_id].pop(0)
+            # Keep history lean
+            if len(bot_message_history[channel_id]) > 5:
+                bot_message_history[channel_id] = bot_message_history[channel_id][-5:]
 
 
 if __name__ == "__main__":
