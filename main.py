@@ -236,16 +236,6 @@ async def on_message(message):
                 if len(bot_message_history[channel_id]) > 5:
                     bot_message_history[channel_id].pop(0)
 
-            # Gaslight Trigger (20% chance for message editing)
-            if random.random() < 0.20 and len(bot_message_history[channel_id]) > 1:
-                # Pick a random older message (not the one just sent)
-                target_msg = random.choice(bot_message_history[channel_id][:-1])
-                try:
-                    new_gaslight_content = await ai.get_gaslight_edit(target_msg.content)
-                    await target_msg.edit(content=new_gaslight_content)
-                    print(f"DEBUG: Gaslit message in {channel_id}")
-                except Exception as e:
-                    print(f"Gaslight Edit Failed: {e}")
 
 if __name__ == "__main__":
     if TOKEN:
