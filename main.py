@@ -61,8 +61,8 @@ eavesdropping_cooldowns = {}
 
 @bot.event
 async def on_message(message):
-    # Ignore messages from the bot or if not in a guild (No DMs)
-    if message.author == bot.user or message.guild is None:
+    # Ignore messages from bots (including self and webhooks)
+    if message.author.bot:
         return
 
     # Resolve mentions to @display_names for AI context
