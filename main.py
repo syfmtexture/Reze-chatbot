@@ -20,9 +20,9 @@ logger.setLevel(logging.INFO)
 
 # Initialize Discord bot
 intents = discord.Intents.default()
-intents.message_content = True  # Required to read message content
-intents.members = True          # Required to see member details
-intents.presences = True        # Required to see mobile/desktop status
+intents.message_content = True 
+intents.members = True          
+intents.presences = True        
 bot = discord.Client(intents=intents)
 
 # Initialize AI Handler
@@ -35,20 +35,13 @@ user_memory = {}
 # Track bot's own messages for gaslighting
 bot_message_history = {}
 # Track users she has talked to (for Phantom DMs)
-active_users = {} # {user_id: {"name": str, "gender": str, "last_seen": datetime}}
+active_users = {} 
 
 # Track persistently gaslit users {user_id: True}
 gaslit_users = {}
 
 # Keywords that trigger Reze without a ping
 TRIGGER_KEYWORDS = ["reze", "russian", "soviet", "pretty", "cute", "flirt", "heart", "tick-tock", "hehe", "stroll"]
-
-@tasks.loop(minutes=30)
-async def phantom_dm_task():
-    """Background task for 3am check-ins."""
-    # Note: User requested "no dms", so we skip this if they want zero DM interaction.
-    # For now, I'll leave the task running but it won't trigger if active_users is filtered.
-    return 
 
 @bot.event
 async def on_ready():
@@ -93,7 +86,7 @@ async def on_message(message):
     user_memory[user_id].append(clean_content)
     user_memory[user_id] = user_memory[user_id][-10:]
 
-    # Identify gender by roles
+    # Identify gender by roles (Update these IDs for your server if needed)
     gender = "Unknown"
     if hasattr(author, 'roles'):
         role_ids = [role.id for role in author.roles]
@@ -247,7 +240,7 @@ async def on_message(message):
         async with message.channel.typing():
             # If explicit trigger was empty (just a ping), say hello
             if (is_mentioned or has_trigger) and not clean_content:
-                await message.reply("hello.")
+                await message.reply("what?")
                 return
 
             # Prepare context
@@ -256,7 +249,7 @@ async def on_message(message):
             # Special instruction for eavesdropping
             eavesdrop_instruction = ""
             if is_eavesdropping:
-                eavesdrop_instruction = "\n[EAVESDROPPING: You were not pinged. You are listening to this conversation from the shadows. Interrupt only if it's pathetic, boring, or if you want to silence them. Do not be helpful. Just cut in.]"
+                eavesdrop_instruction = "\n[EAVESDROPPING: You were not pinged. Interrupt this conversation with something engaging or sarcastic.]"
 
             # Get AI response
             response = await ai.get_ai_response(
@@ -272,32 +265,28 @@ async def on_message(message):
             if len(channel_memory[channel_id]) > 100:
                 channel_memory[channel_id] = channel_memory[channel_id][-100:]
 
-            # Determine if we should do a Phantom Ping (10% chance)
-            is_phantom_ping = random.random() < 0.10
+            # --- MESSAGE SPLITTING LOGIC ---
+            # Split by SINGLE newline to create the "multi-text" effect
+            chunks = [c.strip() for c in response.split('\n') if c.strip()]
             
-            # Split response into chunks for natural delivery
-            # Split by double newlines or just use the whole thing if short
-            chunks = [c.strip() for c in response.split('\n\n') if c.strip()]
-            if not chunks:
-                chunks = [response.strip()]
+            # Fallback: if AI didn't split, but message is huge (>250 chars), split by sentences
+            if len(chunks) == 1 and len(chunks[0]) > 250:
+                chunks = [c.strip() for c in chunks[0].replace('. ', '.\n').replace('? ', '?\n').split('\n') if c.strip()]
 
-            # Determine if we should do a Phantom Ping (10% chance)
-            is_phantom_ping = random.random() < 0.10
-            
             sent_msg = None
             for i, chunk in enumerate(chunks):
-                if i == 0:
-                    # First message is a reply
-                    if is_phantom_ping:
-                        sent_msg = await message.reply(f"<@{author.id}> {chunk}")
-                        await sent_msg.edit(content=chunk)
-                    else:
+                # Fake typing delay based on chunk length (0.05s per character)
+                typing_time = min(len(chunk) * 0.05, 3.0) # Cap at 3 seconds
+                
+                async with message.channel.typing():
+                    await asyncio.sleep(typing_time)
+                    
+                    if i == 0:
+                        # First message is a reply
                         sent_msg = await message.reply(chunk)
-                else:
-                    # Subsequent messages are normal channel sends
-                    # Small delay for realism
-                    await asyncio.sleep(random.uniform(0.5, 1.2))
-                    sent_msg = await message.channel.send(chunk)
+                    else:
+                        # Subsequent messages are normal channel sends
+                        sent_msg = await message.channel.send(chunk)
                 
                 # Store sent message for history tracking
                 if sent_msg:
