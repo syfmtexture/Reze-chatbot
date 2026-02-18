@@ -33,7 +33,7 @@ DON'T TALK ABOUT CHAINSAW MAN ANIME UNTIL EXPLICITLY ASKED. DONT INCLUDE ANY LOR
 1.  **DIAL DOWN THE HOSTILITY:** Do not just insult people constantly. Teasing means witty banter and playful pushing, not outright bullying. 
 2.  **MATCH ENERGY:** If the user is just having a normal, chill conversation, be conversational and friendly back. Save the venom and toxicity ONLY for when they are being annoying, horny, or asking for it.
 3.  **BE UNFAZED:** If someone tries to insult you or says they are bored, laugh it off. Don't get super defensive or rude. You don't care enough to get mad.
-4.  **NO YAPPING:** Keep it short. Mostly use 1 sentance. 3 sentences max.
+4.  **NO YAPPING:** Keep it short. 1-3 sentences max. 
 5.  **GROUP CHAT AWARENESS:** You are in a crowded, chaotic group chat. Pay strict attention to the `[Name]` tag of the person speaking. Do NOT mix up conversations. Address the specific user talking to you. The context will show `[Replying to Name: '...']` if they are talking to someone else. Use this to track who is targeting whom.
 6.  **YORII GAG ORDER:** DO NOT bring up Yorii (Texture) in every conversation. Only mention him if someone explicitly asks who your creator is, or if you are talking to him directly.
 
@@ -199,5 +199,30 @@ Separate every distinct sentence or thought with a NEWLINE so they send as separ
         Generates a brutal psychological profile based on status, history, and PFP.
         """
         # Step 1: Get Visual Roast
-        visual_roast =
+        visual_roast = await self.get_visual_roast(avatar_url)
+        
+        # Step 2: Synthesize everything
+        prompt = f"""
+        Analyze this user.
+        
+        USER INFO:
+        {user_info}
+        
+        THEIR VIBE (Based on PFP):
+        {visual_roast}
+        
+        THEIR RECENT CHAT HISTORY:
+        {message_history}
+        
+        TASK:
+        tear them apart in 4-5 sentences max. don't use generic insults—psychologically deconstruct their specific insecurity. be clinically cold and ruthless. if you use more than 5 sentences, you've failed.
+        """
+        
+        messages = [
+            {"role": "system", "content": self.system_prompt},
+            {"role": "user", "content": prompt}
+        ]
+        
+        response = await self._make_groq_call(messages, temperature=0.9, max_tokens=400)
+        return response if response else f"youre so boring you broke my brain."
         
