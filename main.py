@@ -36,9 +36,11 @@ user_memory = {}
 bot_message_history = {}
 # Track users she has talked to (for Phantom DMs)
 active_users = {} 
-
 # Track persistently gaslit users {user_id: True}
 gaslit_users = {}
+
+# NEW: Track how many concurrent requests are happening in a channel
+active_requests = {}
 
 # Keywords that trigger Reze without a ping
 TRIGGER_KEYWORDS = ["reze", "russian", "soviet", "pretty", "cute", "flirt", "heart", "tick-tock", "hehe", "stroll"]
@@ -247,64 +249,79 @@ async def on_message(message):
         return
 
     if is_mentioned or has_trigger or is_eavesdropping:
-        async with message.channel.typing():
-            # If explicit trigger was empty (just a ping), say hello
-            if (is_mentioned or has_trigger) and not clean_content:
-                await message.reply("what?")
-                return
+        # Register active processing for this channel
+        if channel_id not in active_requests:
+            active_requests[channel_id] = 0
+        active_requests[channel_id] += 1
+        
+        try:
+            async with message.channel.typing():
+                # If explicit trigger was empty (just a ping), say hello
+                if (is_mentioned or has_trigger) and not clean_content:
+                    await message.reply("what?")
+                    return
 
-            # Prepare context
-            personal_context = f"| Note: {name}'s last few words: {', '.join(user_memory[user_id][-3:])}"
-            
-            # Special instruction for eavesdropping
-            eavesdrop_instruction = ""
-            if is_eavesdropping:
-                eavesdrop_instruction = "\n[EAVESDROPPING: You were not pinged. Interrupt this conversation with something engaging or sarcastic.]"
-
-            # Get AI response
-            response = await ai.get_ai_response(
-                formatted_user_message + personal_context + eavesdrop_instruction, 
-                history=channel_memory[channel_id][-100:]
-            )
-
-            # Update channel memory
-            channel_memory[channel_id].append({"role": "user", "content": formatted_user_message})
-            channel_memory[channel_id].append({"role": "assistant", "content": response})
-            
-            # Keep memory lean (50 turns)
-            if len(channel_memory[channel_id]) > 100:
-                channel_memory[channel_id] = channel_memory[channel_id][-100:]
-
-            # --- MESSAGE SPLITTING LOGIC ---
-            # Split by SINGLE newline to create the "multi-text" effect
-            chunks = [c.strip() for c in response.split('\n') if c.strip()]
-            
-            # Fallback: if AI didn't split, but message is huge (>250 chars), split by sentences
-            if len(chunks) == 1 and len(chunks[0]) > 250:
-                chunks = [c.strip() for c in chunks[0].replace('. ', '.\n').replace('? ', '?\n').split('\n') if c.strip()]
-
-            sent_msg = None
-            for i, chunk in enumerate(chunks):
-                # Fake typing delay based on chunk length (0.05s per character)
-                typing_time = min(len(chunk) * 0.05, 3.0) # Cap at 3 seconds
+                # Prepare context
+                personal_context = f"| Note: {name}'s last few words: {', '.join(user_memory[user_id][-3:])}"
                 
-                async with message.channel.typing():
-                    await asyncio.sleep(typing_time)
+                # Special instruction for eavesdropping
+                eavesdrop_instruction = ""
+                if is_eavesdropping:
+                    eavesdrop_instruction = "\n[EAVESDROPPING: You were not pinged. Interrupt this conversation with something engaging or sarcastic.]"
+
+                # Get AI response
+                response = await ai.get_ai_response(
+                    formatted_user_message + personal_context + eavesdrop_instruction, 
+                    history=channel_memory[channel_id][-100:]
+                )
+
+                # Update channel memory
+                channel_memory[channel_id].append({"role": "user", "content": formatted_user_message})
+                channel_memory[channel_id].append({"role": "assistant", "content": response})
+                
+                # Keep memory lean (50 turns)
+                if len(channel_memory[channel_id]) > 100:
+                    channel_memory[channel_id] = channel_memory[channel_id][-100:]
+
+                # --- MESSAGE SPLITTING LOGIC ---
+                chunks = [c.strip() for c in response.split('\n') if c.strip()]
+                
+                # Fallback: if AI didn't split, but message is huge (>250 chars), split by sentences
+                if len(chunks) == 1 and len(chunks[0]) > 250:
+                    chunks = [c.strip() for c in chunks[0].replace('. ', '.\n').replace('? ', '?\n').split('\n') if c.strip()]
+
+                # Check if multiple people are currently triggering her
+                is_busy = active_requests[channel_id] > 1
+
+                sent_msg = None
+                for i, chunk in enumerate(chunks):
+                    # Fake typing delay based on chunk length (0.05s per character)
+                    typing_time = min(len(chunk) * 0.05, 3.0) 
                     
-                    if i == 0:
-                        # First message is a reply to the user
-                        sent_msg = await message.reply(chunk)
-                    else:
-                        # Subsequent messages reply to her OWN previous message to create a visual thread
-                        sent_msg = await sent_msg.reply(chunk)
-                
-                # Store sent message for history tracking
-                if sent_msg:
-                    bot_message_history[channel_id].append(sent_msg)
+                    async with message.channel.typing():
+                        await asyncio.sleep(typing_time)
+                        
+                        if i == 0:
+                            # First message is a reply to the user
+                            sent_msg = await message.reply(chunk)
+                        else:
+                            # Only chain replies if the chat is actively busy with other requests
+                            if is_busy and sent_msg:
+                                sent_msg = await sent_msg.reply(chunk)
+                            else:
+                                sent_msg = await message.channel.send(chunk)
+                    
+                    # Store sent message for history tracking
+                    if sent_msg:
+                        bot_message_history[channel_id].append(sent_msg)
 
-            # Keep history lean
-            if len(bot_message_history[channel_id]) > 5:
-                bot_message_history[channel_id] = bot_message_history[channel_id][-5:]
+                # Keep history lean
+                if len(bot_message_history[channel_id]) > 5:
+                    bot_message_history[channel_id] = bot_message_history[channel_id][-5:]
+                    
+        finally:
+            # Always decrement the tracker even if something crashes
+            active_requests[channel_id] -= 1
 
 
 if __name__ == "__main__":
