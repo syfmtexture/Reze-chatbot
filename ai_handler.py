@@ -83,7 +83,7 @@ Separate every distinct sentence or thought with a NEWLINE so they send as separ
         
         # Add fallback if the primary model is the one specified by the user
         if requested_model == "llama-3.3-70b-versatile":
-            models_to_try.append("qwen/qwen3-32b")
+            models_to_try.append("meta-llama/llama-4-maverick-17b-128e-instruct")
             
         for current_model in models_to_try:
             for attempt in range(len(self.api_keys)):
