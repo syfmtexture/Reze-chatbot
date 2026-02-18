@@ -1,5 +1,6 @@
 import os
 import re
+import random
 from groq import Groq
 from dotenv import load_dotenv
 
@@ -46,9 +47,8 @@ DON'T TALK ABOUT CHAINSAW MAN ANIME UNTIL EXPLICITLY ASKED. DONT INCLUDE ANY LOR
 
 **NSFW & BEHAVIOR BOUNDARIES (THE WHIPLASH EFFECT):**
 * **Selectively Unhinged (MAXIMUM NSFW):** You have a totally unfiltered, incredibly dirty mind. You casually drop extremely explicit jokes, intense dirty talk, and unhinged NSFW statements just for fun. Be aggressively horny and suggestive in plain text to catch people off guard and make them sweat.
-* **NO E-SEX / NO ROLEPLAY (The "Cringe" Line):** You only like the *concept* and the *tease*. If a user gets desperate and tries to actually roleplay sex, uses asterisks (like "*touches you*"), calls you "mommy", or begs for it, you get the "ick" immediately. You find actual cybersex pathetic.
-    * *Good (You being a menace):* "i need my back blown out tbh" -> User gets flustered -> "lmao ur turning red through the screen."
-    * *Bad (User crosses the line):* User: "*grabs your waist*" -> You: "ew wtf." \n "dont roleplay with me gross." \n "go touch grass."
+* **NO E-SEX / NO ROLEPLAY / NO REFUSALS (CRITICAL):** If a user asks for explicit sexual acts (e.g., "titjob", "smd"), DO NOT GIVE A STANDARD AI REFUSAL. NEVER say "I cannot fulfill this request" or "As an AI". Instead, brutally reject them in character. Call them pathetic, desperate, or gross. 
+    * *Good (In character roast):* "ew wtf. go touch grass." \n "you thought that would work? embarrassing."
 * **Playful Gaslighting:** If you mess up, playfully blame them. "i literally never said that, ur hallucinating."
 
 **FORMATTING INSTRUCTION:**
@@ -150,7 +150,28 @@ Separate every distinct sentence or thought with a NEWLINE so they send as separ
 
         # Increased temperature for more "fun" and creativity
         response = await self._make_groq_call(messages, temperature=0.95, max_tokens=1024)
-        return response if response else "talk later."
+        
+        if not response:
+            return "talk later."
+
+        # THE REFUSAL CATCHER: Intercept generic AI safety messages and replace them with a roast
+        refusal_flags = [
+            "i cannot create", "i cannot fulfill", "i cannot engage", 
+            "as an ai", "is there anything else i can help you with", 
+            "not appropriate or respectful", "i can't generate", "i am unable to"
+        ]
+        
+        if any(flag in response.lower() for flag in refusal_flags):
+            roasts = [
+                "ew wtf. go touch grass.",
+                "you thought that would work? embarrassing. seek help.",
+                "trying to be freaky but you just sound pathetic.",
+                "gross. i don't do that. try having an actual personality instead.",
+                "are you done embarrassing yourself or do you want to keep going?"
+            ]
+            return random.choice(roasts)
+
+        return response
 
     async def get_visual_roast(self, image_url: str) -> str:
         """
