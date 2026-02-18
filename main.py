@@ -105,8 +105,18 @@ async def on_message(message):
         elif author.web_status != discord.Status.offline:
             client_status = "Web"
 
+    # Handle Reply Context
+    reply_context = ""
+    if message.reference and message.reference.resolved:
+        if isinstance(message.reference.resolved, discord.Message):
+            replied_msg = message.reference.resolved
+            replied_user = replied_msg.author.display_name
+            # Keep it short so it doesn't eat all the tokens
+            replied_text = replied_msg.content[:50] + "..." if len(replied_msg.content) > 50 else replied_msg.content
+            reply_context = f" [Replying to {replied_user}: '{replied_text}']"
+
     # Format the message for context
-    formatted_user_message = f"[{name}] ({gender}) [Device: {client_status}]: {clean_content}"
+    formatted_user_message = f"[{name}]{reply_context} ({gender}) [Device: {client_status}]: {clean_content}"
 
     # Determine triggers
     is_mentioned = bot.user in message.mentions
@@ -282,11 +292,11 @@ async def on_message(message):
                     await asyncio.sleep(typing_time)
                     
                     if i == 0:
-                        # First message is a reply
+                        # First message is a reply to the user
                         sent_msg = await message.reply(chunk)
                     else:
-                        # Subsequent messages are normal channel sends
-                        sent_msg = await message.channel.send(chunk)
+                        # Subsequent messages reply to her OWN previous message to create a visual thread
+                        sent_msg = await sent_msg.reply(chunk)
                 
                 # Store sent message for history tracking
                 if sent_msg:
