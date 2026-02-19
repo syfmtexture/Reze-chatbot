@@ -51,9 +51,6 @@ async def on_ready():
     print("Bot is ready. Mention me or use triggers to start chatting.")
     print("------")
 
-# Track eavesdropping cooldowns {channel_id: datetime}
-eavesdropping_cooldowns = {}
-
 @bot.event
 async def on_message(message):
     # Ignore messages from bots (including self and webhooks)
@@ -125,19 +122,6 @@ async def on_message(message):
     content_lower = clean_content.lower()
     has_trigger = any(word in content_lower for word in TRIGGER_KEYWORDS)
     
-    # Check for Eavesdropping (5% chance if not triggered, with 1hr cooldown)
-    is_eavesdropping = False
-    if not (is_mentioned or has_trigger):
-        now = datetime.datetime.now()
-        # 5% base chance to eavesdrop
-        if random.random() < 0.05:
-            # Check cooldown
-            if channel_id not in eavesdropping_cooldowns or \
-               (now - eavesdropping_cooldowns[channel_id]).total_seconds() > 3600:
-                is_eavesdropping = True
-                eavesdropping_cooldowns[channel_id] = now
-                print(f"DEBUG: Eavesdropping on {channel_id}")
-
     # Persistent Gaslighting: Humiliate every message
     if user_id in gaslit_users:
         async with message.channel.typing():
@@ -248,7 +232,7 @@ async def on_message(message):
             await message.reply(profile)
         return
 
-    if is_mentioned or has_trigger or is_eavesdropping:
+    if is_mentioned or has_trigger:
         # Register active processing for this channel
         if channel_id not in active_requests:
             active_requests[channel_id] = 0
@@ -264,14 +248,9 @@ async def on_message(message):
                 # Prepare context
                 personal_context = f"| Note: {name}'s last few words: {', '.join(user_memory[user_id][-3:])}"
                 
-                # Special instruction for eavesdropping
-                eavesdrop_instruction = ""
-                if is_eavesdropping:
-                    eavesdrop_instruction = "\n[EAVESDROPPING: You were not pinged. Interrupt this conversation with something engaging or sarcastic.]"
-
                 # Get AI response
                 response = await ai.get_ai_response(
-                    formatted_user_message + personal_context + eavesdrop_instruction, 
+                    formatted_user_message + personal_context,
                     history=channel_memory[channel_id][-100:]
                 )
 
