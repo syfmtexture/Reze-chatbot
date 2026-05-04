@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>REZE — Control Panel</title>
+    <meta name="description" content="Dashboard for controlling the Reze Discord Bot">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<!-- ═══════════════════ LOGIN GATE ═══════════════════ -->
+<div class="login-gate" id="loginGate">
+    <div class="login-bg-orb orb-1"></div>
+    <div class="login-bg-orb orb-2"></div>
+    <div class="login-bg-orb orb-3"></div>
+    <div class="login-card">
+        <div class="login-header">
+            <div class="login-avatar">R</div>
+            <h1 class="login-title">REZE</h1>
+            <p class="login-subtitle">enter password to continue</p>
+        </div>
+        <form id="loginForm" autocomplete="off">
+            <div class="login-input-wrap">
+                <input type="password" id="loginPassword" placeholder="••••••••" autocomplete="off" spellcheck="false">
+                <button type="submit" class="login-btn" id="loginBtn">→</button>
+            </div>
+            <p class="login-error" id="loginError"></p>
+        </form>
+    </div>
+</div>
+
+<!-- ═══════════════════ MAIN DASHBOARD ═══════════════════ -->
+<div class="dashboard" id="dashboard" style="display:none">
+
+    <!-- SIDEBAR -->
+    <nav class="sidebar" id="sidebar">
+        <div class="sidebar-brand">
+            <span class="brand-dot"></span>
+            <span class="brand-text">REZE</span>
+        </div>
+        <div class="sidebar-nav">
+            <button class="nav-btn active" data-page="overview" title="Overview">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+                <span>Overview</span>
+            </button>
+            <button class="nav-btn" data-page="config" title="Configuration">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                <span>Config</span>
+            </button>
+            <button class="nav-btn" data-page="personality" title="Personality">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+                <span>Persona</span>
+            </button>
+            <button class="nav-btn" data-page="users" title="Users">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                <span>Users</span>
+            </button>
+            <button class="nav-btn" data-page="memory" title="Memory">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+                <span>Memory</span>
+            </button>
+            <button class="nav-btn" data-page="tasks" title="Tasks">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                <span>Tasks</span>
+            </button>
+        </div>
+        <button class="nav-btn logout-btn" id="logoutBtn" title="Logout">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+            <span>Logout</span>
+        </button>
+    </nav>
+
+    <!-- MAIN CONTENT -->
+    <main class="main-content">
+
+        <!-- TOP BAR -->
+        <header class="topbar">
+            <div class="topbar-left">
+                <h2 class="page-title" id="pageTitle">Overview</h2>
+            </div>
+            <div class="topbar-right">
+                <div class="live-indicator" id="liveIndicator">
+                    <span class="live-dot"></span>
+                    <span class="live-text">connecting...</span>
+                </div>
+                <div class="model-badge" id="modelBadge">—</div>
+            </div>
+        </header>
+
+        <!-- PAGES -->
+        <div class="page-wrap">
+
+            <!-- ═══ OVERVIEW ═══ -->
+            <section class="page active" id="page-overview">
+                <div class="bento-grid">
+                    <div class="bento-card bento-status">
+                        <div class="bento-label">STATUS</div>
+                        <div class="bento-value" id="statBotName">—</div>
+                        <div class="bento-sub" id="statBotId">—</div>
+                    </div>
+                    <div class="bento-card bento-uptime">
+                        <div class="bento-label">UPTIME</div>
+                        <div class="bento-value mono" id="statUptime">0h 0m</div>
+                    </div>
+                    <div class="bento-card bento-guilds">
+                        <div class="bento-label">SERVERS</div>
+                        <div class="bento-value" id="statGuilds">0</div>
+                    </div>
+                    <div class="bento-card bento-keys">
+                        <div class="bento-label">API KEYS</div>
+                        <div class="bento-value"><span id="statCurrentKey">0</span>/<span id="statKeyCount">0</span></div>
+                        <div class="bento-sub">active / total</div>
+                    </div>
+                    <div class="bento-card bento-moods bento-wide">
+                        <div class="bento-label">LIVE CHANNEL MOODS</div>
+                        <div class="mood-grid" id="moodGrid">
+                            <div class="mood-empty">no active channels yet</div>
+                        </div>
+                    </div>
+                    <div class="bento-card bento-grudges">
+                        <div class="bento-label">ACTIVE GRUDGES</div>
+                        <div class="grudge-list" id="grudgeList">
+                            <div class="mood-empty">nobody's pissed her off... yet</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ═══ CONFIG ═══ -->
+            <section class="page" id="page-config">
+                <div class="config-sections" id="configSections">
+                    <!-- Populated by JS -->
+                </div>
+                <div class="config-actions">
+                    <button class="btn btn-primary" id="saveConfigBtn">Save Changes</button>
+                    <button class="btn btn-ghost" id="resetConfigBtn">Reset</button>
+                </div>
+            </section>
+
+            <!-- ═══ PERSONALITY ═══ -->
+            <section class="page" id="page-personality">
+                <div class="persona-editor">
+                    <div class="persona-header">
+                        <h3>System Prompt</h3>
+                        <div class="persona-actions">
+                            <button class="btn btn-ghost btn-sm" id="resetPersonaBtn">Revert to Default</button>
+                            <button class="btn btn-primary btn-sm" id="savePersonaBtn">Save Prompt</button>
+                        </div>
+                    </div>
+                    <div class="editor-wrap">
+                        <div class="editor-gutter" id="editorGutter"></div>
+                        <textarea id="personaEditor" spellcheck="false" placeholder="Loading personality..."></textarea>
+                    </div>
+                    <div class="persona-footer">
+                        <span class="char-count" id="charCount">0 chars</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ═══ USERS ═══ -->
+            <section class="page" id="page-users">
+                <div class="users-header">
+                    <div class="search-wrap">
+                        <input type="text" id="userSearch" placeholder="Search users..." class="search-input">
+                    </div>
+                </div>
+                <div class="users-grid" id="usersGrid">
+                    <!-- Populated by JS -->
+                </div>
+            </section>
+
+            <!-- ═══ MEMORY ═══ -->
+            <section class="page" id="page-memory">
+                <div class="memory-layout">
+                    <div class="memory-sidebar">
+                        <div class="memory-sidebar-title">Channels</div>
+                        <div class="channel-list" id="channelList">
+                            <div class="mood-empty">loading...</div>
+                        </div>
+                    </div>
+                    <div class="memory-main">
+                        <div class="memory-header" id="memoryHeader">
+                            <h3 id="memoryTitle">Select a channel</h3>
+                            <div class="memory-actions" style="display:none" id="memoryActions">
+                                <button class="btn btn-ghost btn-sm" id="editSummaryBtn">Edit Summary</button>
+                                <button class="btn btn-danger btn-sm" id="wipeMemoryBtn">Wipe Memory</button>
+                            </div>
+                        </div>
+                        <div class="memory-summary" id="memorySummary" style="display:none">
+                            <div class="summary-label">LONG-TERM SUMMARY</div>
+                            <div class="summary-text" id="summaryText">—</div>
+                        </div>
+                        <div class="chat-log" id="chatLog">
+                            <div class="chat-empty">pick a channel from the left to view memory</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ═══ TASKS ═══ -->
+            <section class="page" id="page-tasks">
+                <div class="tasks-grid">
+                    <div class="task-card">
+                        <div class="task-info">
+                            <div class="task-icon">💬</div>
+                            <div>
+                                <div class="task-name">Unprompted Messages</div>
+                                <div class="task-desc">she texts first when chat is dead</div>
+                            </div>
+                        </div>
+                        <label class="toggle">
+                            <input type="checkbox" id="task-unprompted" data-task="unprompted">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="task-card">
+                        <div class="task-info">
+                            <div class="task-icon">😅</div>
+                            <div>
+                                <div class="task-name">Wrong Chat</div>
+                                <div class="task-desc">accidentally sends messages to the wrong channel</div>
+                            </div>
+                        </div>
+                        <label class="toggle">
+                            <input type="checkbox" id="task-wrong_chat" data-task="wrong_chat">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="task-card">
+                        <div class="task-info">
+                            <div class="task-icon">📸</div>
+                            <div>
+                                <div class="task-name">Story Posting</div>
+                                <div class="task-desc">posts instagram-style stories with images</div>
+                            </div>
+                        </div>
+                        <label class="toggle">
+                            <input type="checkbox" id="task-story" data-task="story">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="task-card">
+                        <div class="task-info">
+                            <div class="task-icon">🎮</div>
+                            <div>
+                                <div class="task-name">Status Cycling</div>
+                                <div class="task-desc">changes discord status throughout the day</div>
+                            </div>
+                        </div>
+                        <label class="toggle">
+                            <input type="checkbox" id="task-status_cycling" data-task="status_cycling">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                </div>
+            </section>
+
+        </div><!-- /page-wrap -->
+    </main>
+</div><!-- /dashboard -->
+
+<!-- TOAST -->
+<div class="toast-container" id="toastContainer"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
