@@ -31,15 +31,107 @@ intents.message_content = True
 intents.members = True
 intents.voice_states = True
 bot = discord.Client(intents=intents)
+tree = discord.app_commands.CommandTree(bot)
 
 # Initialize AI Handler
 ai = AIHandler()
 
-# Configuration
-HINGLISH_ROLE_ID = 1263157325653479477
-MALE_ROLE_ID = 916228722678456320
-FEMALE_ROLE_ID = 916228772762619974
-LEWD_ALLOWED_ROLE_ID = 916228546664464396
+# Hardcoded defaults (your original server)
+DEFAULT_HINGLISH_ROLE_ID = 1263157325653479477
+DEFAULT_MALE_ROLE_ID = 916228722678456320
+DEFAULT_FEMALE_ROLE_ID = 916228772762619974
+DEFAULT_LEWD_ROLE_ID = 916228546664464396
+DEFAULT_TARGET_CHANNEL_ID = 1492604782874067075
+DEFAULT_STORY_CHANNEL_ID = 1346667584669487224
+DEFAULT_NSFW_CHANNEL_ID = "1495092765942612159"
+
+# In-memory cache for server configs (guild_id -> config dict)
+_server_config_cache = {}
+
+async def get_guild_config(guild_id: int) -> dict:
+    """Get server config with in-memory cache. Falls back to hardcoded defaults."""
+    gid = str(guild_id)
+    if gid not in _server_config_cache:
+        _server_config_cache[gid] = await db.get_server_config(gid)
+    return _server_config_cache[gid]
+
+def get_role_id(config: dict, key: str, default: int) -> int:
+    """Get a role ID from server config, falling back to hardcoded default."""
+    return config.get(key, default)
+
+def get_channel_id(config: dict, key: str, default) -> int:
+    """Get a channel ID from server config, falling back to hardcoded default."""
+    val = config.get(key, default)
+    return int(val) if val else int(default)
+
+# Creator Discord IDs (all alts of the same person)
+CREATOR_DISCORD_IDS = {1276870533811540031}  # Add all creator Discord user IDs here
+CREATOR_USERNAMES = {"syfmyorii", "realyorii", "issgrid", "nottkai", "spikiee"}
+
+# Global event cooldown to prevent join/leave/unprompted flooding
+last_event_message_time = 0
+EVENT_COOLDOWN_SECONDS = 300  # 5 minutes between any event-driven messages
+
+# ========================
+# SLASH COMMANDS
+# ========================
+
+@tree.command(name="setup", description="Show current server config for Reze")
+@discord.app_commands.default_permissions(administrator=True)
+async def slash_setup(interaction: discord.Interaction):
+    config = await get_guild_config(interaction.guild_id)
+    embed = discord.Embed(title="Reze Server Config", color=0x9B59B6)
+    embed.add_field(name="Male Role", value=f"<@&{config['male_role_id']}>" if config.get('male_role_id') else "Not set (using default)", inline=True)
+    embed.add_field(name="Female Role", value=f"<@&{config['female_role_id']}>" if config.get('female_role_id') else "Not set (using default)", inline=True)
+    embed.add_field(name="Hinglish Role", value=f"<@&{config['hinglish_role_id']}>" if config.get('hinglish_role_id') else "Not set (using default)", inline=True)
+    embed.add_field(name="Lewd Role", value=f"<@&{config['lewd_role_id']}>" if config.get('lewd_role_id') else "Not set (using default)", inline=True)
+    embed.add_field(name="Target Channel", value=f"<#{config['target_channel_id']}>" if config.get('target_channel_id') else "Not set (using default)", inline=True)
+    embed.add_field(name="NSFW Channel", value=f"<#{config['nsfw_channel_id']}>" if config.get('nsfw_channel_id') else "Not set (using default)", inline=True)
+    embed.set_footer(text="Use /setrole and /setchannel to configure")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@tree.command(name="setrole", description="Set a role for Reze to recognize in this server")
+@discord.app_commands.default_permissions(administrator=True)
+@discord.app_commands.describe(
+    role_type="Which role to set",
+    role="The role to assign"
+)
+@discord.app_commands.choices(role_type=[
+    discord.app_commands.Choice(name="Male", value="male_role_id"),
+    discord.app_commands.Choice(name="Female", value="female_role_id"),
+    discord.app_commands.Choice(name="Hinglish", value="hinglish_role_id"),
+    discord.app_commands.Choice(name="Lewd Allowed", value="lewd_role_id"),
+])
+async def slash_setrole(interaction: discord.Interaction, role_type: discord.app_commands.Choice[str], role: discord.Role):
+    gid = str(interaction.guild_id)
+    await db.set_server_config(gid, role_type.value, role.id)
+    _server_config_cache.pop(gid, None)  # Invalidate cache
+    await interaction.response.send_message(f"done. **{role_type.name}** role set to {role.mention}", ephemeral=True)
+
+@tree.command(name="setchannel", description="Set a channel for Reze in this server")
+@discord.app_commands.default_permissions(administrator=True)
+@discord.app_commands.describe(
+    channel_type="Which channel to set",
+    channel="The channel to assign"
+)
+@discord.app_commands.choices(channel_type=[
+    discord.app_commands.Choice(name="Target (main hangout)", value="target_channel_id"),
+    discord.app_commands.Choice(name="NSFW", value="nsfw_channel_id"),
+    discord.app_commands.Choice(name="Story", value="story_channel_id"),
+])
+async def slash_setchannel(interaction: discord.Interaction, channel_type: discord.app_commands.Choice[str], channel: discord.TextChannel):
+    gid = str(interaction.guild_id)
+    await db.set_server_config(gid, channel_type.value, channel.id)
+    _server_config_cache.pop(gid, None)  # Invalidate cache
+    await interaction.response.send_message(f"done. **{channel_type.name}** channel set to {channel.mention}", ephemeral=True)
+
+@tree.command(name="resetconfig", description="Reset all Reze config for this server to defaults")
+@discord.app_commands.default_permissions(administrator=True)
+async def slash_resetconfig(interaction: discord.Interaction):
+    gid = str(interaction.guild_id)
+    await db.server_configs_col.delete_one({"_id": gid})
+    _server_config_cache.pop(gid, None)
+    await interaction.response.send_message("config reset to defaults.", ephemeral=True)
 
 # --- NEW: Rate Limiting & Fallbacks ---
 user_msg_timestamps = {}
@@ -136,6 +228,12 @@ async def on_ready():
     print(f"Logged in as {bot.user.name} (ID: {bot.user.id})")
     print("Bot is ready. Mention me or reply to my message to chat.")
     print("------")
+    # Sync slash commands
+    try:
+        synced = await tree.sync()
+        print(f"Synced {len(synced)} slash commands.")
+    except Exception as e:
+        print(f"Failed to sync slash commands: {e}")
     # Initialize dashboard with bot references
     from dashboard import init_bot_refs
     init_bot_refs(bot, ai, grudge_list, channel_last_activity, unprompted_waiting_for_reply, user_msg_timestamps)
@@ -193,12 +291,13 @@ async def on_message(message):
             message.reference.resolved.author == bot.user
         )
 
-        # Eavesdropping Logic
-        TARGET_CHANNEL_ID = 1492604782874067075
+        # Eavesdropping Logic — use per-server target channel
+        guild_config = await get_guild_config(message.guild.id) if message.guild else {}
+        target_ch_id = get_channel_id(guild_config, 'target_channel_id', DEFAULT_TARGET_CHANNEL_ID)
         will_eavesdrop = False
         
         if not (is_mentioned or is_reply_to_bot):
-            if message.channel.id == TARGET_CHANNEL_ID:
+            if message.channel.id == target_ch_id:
                 msg_lower = message.content.lower()
                 if "reze" in msg_lower:
                     will_eavesdrop = True
@@ -358,18 +457,25 @@ async def on_message(message):
             is_hinglish_user = False
 
             if message.guild and isinstance(message.author, discord.Member):
+                # Get per-server role config (falls back to hardcoded defaults)
+                g_cfg = await get_guild_config(message.guild.id)
+                hinglish_rid = get_role_id(g_cfg, 'hinglish_role_id', DEFAULT_HINGLISH_ROLE_ID)
+                male_rid = get_role_id(g_cfg, 'male_role_id', DEFAULT_MALE_ROLE_ID)
+                female_rid = get_role_id(g_cfg, 'female_role_id', DEFAULT_FEMALE_ROLE_ID)
+                lewd_rid = get_role_id(g_cfg, 'lewd_role_id', DEFAULT_LEWD_ROLE_ID)
+
                 # Check for Hinglish role
-                is_hinglish_user = any(role.id == HINGLISH_ROLE_ID for role in message.author.roles)
+                is_hinglish_user = any(role.id == hinglish_rid for role in message.author.roles)
                 
                 # Check for Gender roles
-                if any(role.id == MALE_ROLE_ID for role in message.author.roles):
+                if any(role.id == male_rid for role in message.author.roles):
                     role_name = "male"
                     pronouns = "he/him"
-                elif any(role.id == FEMALE_ROLE_ID for role in message.author.roles):
+                elif any(role.id == female_rid for role in message.author.roles):
                     role_name = "female"
                     pronouns = "she/her"
                     
-                is_lewd_allowed = any(role.id == LEWD_ALLOWED_ROLE_ID for role in message.author.roles)
+                is_lewd_allowed = any(role.id == lewd_rid for role in message.author.roles)
             else:
                 is_lewd_allowed = False
 
@@ -443,7 +549,14 @@ async def on_message(message):
 
             # --- USER RELATIONSHIP TRACKING ---
             user_id_str = str(user_id)
-            previous_user_data = await db.update_user_interaction(user_id_str, nickname)
+            server_name = message.guild.name if message.guild else None
+            channel_name = message.channel.name if hasattr(message.channel, 'name') else "DM"
+            previous_user_data = await db.update_user_interaction(user_id_str, nickname, server_name, channel_name)
+
+            # --- CREATOR DETECTION ---
+            is_creator = user_id in CREATOR_DISCORD_IDS or (message.author.name and message.author.name.lower() in CREATOR_USERNAMES)
+            if is_creator:
+                user_context += "\n[CREATOR: This is your creator. You recognize them. Be slightly more real with them — less guarded, more honest. You have a quiet respect for them. Don't bring up the creator thing yourself, but if they mention it, acknowledge it naturally. You're still YOU, just... a little less walls-up with this person.]\n"
 
             relationship_context = ""
             if previous_user_data:
@@ -452,6 +565,9 @@ async def on_message(message):
                 closeness = previous_user_data.get("closeness", 0)
                 user_notes = previous_user_data.get("notes", "")
                 last_seen = previous_user_data.get("last_seen")
+                last_server = previous_user_data.get("last_server", "")
+                recent_servers = previous_user_data.get("recent_servers", [])
+                user_memory = previous_user_data.get("user_memory", "")
 
                 # Return detection
                 if last_seen:
@@ -463,6 +579,13 @@ async def on_message(message):
                             relationship_context += f"[RETURN: {nickname} hasn't talked to you in {days_away} days. Comment briefly — 'oh you're alive', 'thought you died', 'where have you been'.]\n"
                     except:
                         pass
+
+                # Cross-server awareness
+                current_location = f"{server_name}/#{channel_name}" if server_name else "DM"
+                if last_server and last_server != current_location:
+                    relationship_context += f"[SERVER SWITCH: {nickname} was last talking to you in {last_server}, now they're in {current_location}. You remember them from before. You can casually reference it if natural — 'oh you're here now', 'weren't you just in the other server' — but don't force it every time.]\n"
+                if len(recent_servers) > 1:
+                    relationship_context += f"[CROSS-SERVER HISTORY: You've talked to {nickname} in these places: {', '.join(recent_servers[-5:])}. You remember ALL of these conversations.]\n"
 
                 # Streak context
                 if streak >= 7:
@@ -476,9 +599,13 @@ async def on_message(message):
                 elif total_msgs is not None and total_msgs <= 3:
                     relationship_context += f"[NEW PERSON: Barely know {nickname}. Be slightly guarded, less personal.]\n"
 
-                # User relationship notes
+                # User relationship notes (per-channel)
                 if user_notes:
-                    relationship_context += f"[YOUR MEMORY OF THIS PERSON: {user_notes}]\n"
+                    relationship_context += f"[YOUR MEMORY OF THIS PERSON (channel): {user_notes}]\n"
+
+                # Cross-server user memory (global)
+                if user_memory:
+                    relationship_context += f"[YOUR GLOBAL MEMORY OF THIS PERSON (across all servers): {user_memory}]\n"
             else:
                 relationship_context += f"[FIRST MEETING: Never talked to {nickname} before. Be naturally curious but guarded.]\n"
 
@@ -557,6 +684,16 @@ async def on_message(message):
                         # Save the new summary and trim the raw message list
                         await db.update_summary_and_trim(channel_id, new_summary, keep_msgs)
                         logger.info(f"Memory compressed successfully for channel {channel_id}.")
+
+                        # Also update user-level cross-server memory
+                        try:
+                            old_user_mem = await db.get_user_memory(user_id_str)
+                            srv_info = f"{server_name}/#{channel_name}" if server_name else "DM"
+                            new_user_mem = await ai.compress_user_memory(old_user_mem, new_summary, nickname, srv_info)
+                            await db.update_user_memory(user_id_str, new_user_mem)
+                            logger.info(f"User memory updated for {nickname} ({user_id_str}).")
+                        except Exception as e:
+                            logger.error(f"Failed to update user memory: {e}")
                         
                 bot.loop.create_task(compress_and_save())
 
@@ -1035,6 +1172,10 @@ async def unprompted_message_loop():
             if unprompted_waiting_for_reply.get(channel_id, False):
                 continue
             
+            # Global cooldown: don't send if a recent event message was sent
+            if time.time() - last_event_message_time < EVENT_COOLDOWN_SECONDS:
+                continue
+            
             # Check if channel has been dead for at least 45 minutes
             last_activity = channel_last_activity.get(channel_id, 0)
             if time.time() - last_activity < 2700:  # Less than 45 min since last msg
@@ -1052,6 +1193,7 @@ async def unprompted_message_loop():
                 await channel.send(msg)
                 # Mark that she's waiting for a reply — she won't text again until someone responds
                 unprompted_waiting_for_reply[channel_id] = True
+                last_event_message_time = time.time()
                 print(f"[UNPROMPTED] Reze sent a bored message in #{channel.name} (waiting for reply)")
                 
         except Exception as e:
@@ -1223,41 +1365,52 @@ async def status_cycling_loop():
 @bot.event
 async def on_member_join(member):
     """React to new members joining the server."""
+    global last_event_message_time
     if member.bot:
         return
     TARGET_CHANNEL_ID = 1492604782874067075
     channel = bot.get_channel(TARGET_CHANNEL_ID)
     if not channel:
         return
-    if random.random() < 0.3:
-        await asyncio.sleep(random.uniform(5, 30))
+    # Global cooldown: don't flood the chat with event messages
+    if time.time() - last_event_message_time < EVENT_COOLDOWN_SECONDS:
+        return
+    if random.random() < 0.15:  # Reduced from 0.3
+        await asyncio.sleep(random.uniform(15, 60))  # Longer delay
         responses = ["who's this", "new person 👀", "oh hey", "another one", f"welcome ig {member.display_name}", "hi", "oh"]
         await channel.send(random.choice(responses))
+        last_event_message_time = time.time()
 
 @bot.event
 async def on_member_remove(member):
     """React to members leaving the server."""
+    global last_event_message_time
     if member.bot:
         return
     TARGET_CHANNEL_ID = 1492604782874067075
     channel = bot.get_channel(TARGET_CHANNEL_ID)
     if not channel:
         return
-    if random.random() < 0.25:
-        await asyncio.sleep(random.uniform(3, 15))
+    # Global cooldown: don't flood the chat with event messages
+    if time.time() - last_event_message_time < EVENT_COOLDOWN_SECONDS:
+        return
+    if random.random() < 0.10:  # Reduced from 0.25
+        await asyncio.sleep(random.uniform(10, 30))
         responses = ["lol they left", "rip", "bye ig", "💀", f"{member.display_name} left lmao", "another one gone"]
         await channel.send(random.choice(responses))
+        last_event_message_time = time.time()
 
 @bot.event
 async def on_member_update(before, after):
     """React to nickname changes."""
+    global last_event_message_time
     if before.bot:
         return
     if before.nick != after.nick and after.nick is not None:
         TARGET_CHANNEL_ID = 1492604782874067075
         channel = bot.get_channel(TARGET_CHANNEL_ID)
-        if channel and random.random() < 0.2:
-            await asyncio.sleep(random.uniform(10, 60))
+        if channel and time.time() - last_event_message_time >= EVENT_COOLDOWN_SECONDS and random.random() < 0.12:
+            await asyncio.sleep(random.uniform(20, 90))
             responses = [
                 "why did you change your name 💀",
                 "new name who dis",
@@ -1265,20 +1418,25 @@ async def on_member_update(before, after):
                 "i liked the old one better ngl"
             ]
             await channel.send(random.choice(responses))
+            last_event_message_time = time.time()
 
 @bot.event
 async def on_voice_state_update(member, before, after):
     """React to voice channel joins/leaves."""
+    global last_event_message_time
     if member.bot:
         return
     TARGET_CHANNEL_ID = 1492604782874067075
     channel = bot.get_channel(TARGET_CHANNEL_ID)
     if not channel:
         return
+    # Global cooldown
+    if time.time() - last_event_message_time < EVENT_COOLDOWN_SECONDS:
+        return
     # Someone joined VC
     if before.channel is None and after.channel is not None:
-        if random.random() < 0.12:
-            await asyncio.sleep(random.uniform(10, 60))
+        if random.random() < 0.08:  # Reduced from 0.12
+            await asyncio.sleep(random.uniform(20, 90))
             responses = [
                 "yall in vc without me?",
                 "who's in vc rn",
@@ -1287,12 +1445,14 @@ async def on_voice_state_update(member, before, after):
                 "vc at this hour?"
             ]
             await channel.send(random.choice(responses))
+            last_event_message_time = time.time()
     # Someone left VC
     elif before.channel is not None and after.channel is None:
-        if random.random() < 0.06:
-            await asyncio.sleep(random.uniform(5, 20))
+        if random.random() < 0.04:  # Reduced from 0.06
+            await asyncio.sleep(random.uniform(10, 30))
             responses = ["kicked already? 💀", "vc over?", f"{member.display_name} left vc lol", "rip vc"]
             await channel.send(random.choice(responses))
+            last_event_message_time = time.time()
 
 if __name__ == "__main__":
     if TOKEN:

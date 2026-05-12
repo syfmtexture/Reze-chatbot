@@ -17,6 +17,27 @@ client = motor.motor_asyncio.AsyncIOMotorClient(MONGODB_URI, tlsCAFile=certifi.w
 db = client['reze_bot']
 channels_col = db['channels']
 users_col = db['users']
+server_configs_col = db['server_configs']
+
+
+# --- SERVER CONFIG (per-guild settings) ---
+
+async def get_server_config(guild_id: str) -> dict:
+    """Get server-specific config. Returns empty dict if not configured."""
+    doc = await server_configs_col.find_one({"_id": guild_id})
+    return doc or {}
+
+async def set_server_config(guild_id: str, key: str, value):
+    """Set a single config key for a server."""
+    await server_configs_col.update_one(
+        {"_id": guild_id},
+        {"$set": {key: value}},
+        upsert=True
+    )
+
+async def get_all_server_configs() -> list:
+    """Get all server configs (for dashboard)."""
+    return await server_configs_col.find().to_list(length=100)
 
 async def get_channel_memory(channel_id: str) -> dict:
     """Fetches the channel's memory, including the summary and recent messages."""
@@ -53,15 +74,23 @@ async def get_user_data(user_id: str) -> dict:
     """Fetches a user's relationship data. Returns None if user not found."""
     return await users_col.find_one({"_id": user_id})
 
-async def update_user_interaction(user_id: str, display_name: str) -> dict:
-    """Called on every interaction. Returns PREVIOUS user data (for absence detection), then updates."""
+async def update_user_interaction(user_id: str, display_name: str, server_name: str = None, channel_name: str = None) -> dict:
+    """Called on every interaction. Returns PREVIOUS user data (for absence detection), then updates.
+    Now also tracks which servers/channels the user has talked to Reze in."""
     now = datetime.now(timezone.utc)
     today = now.strftime("%Y-%m-%d")
 
     existing = await users_col.find_one({"_id": user_id})
 
+    # Build interaction location info
+    location_entry = None
+    if server_name and channel_name:
+        location_entry = f"{server_name}/#{channel_name}"
+    elif channel_name:
+        location_entry = f"DM"
+
     if not existing:
-        await users_col.insert_one({
+        new_doc = {
             "_id": user_id,
             "display_name": display_name,
             "first_seen": now,
@@ -70,36 +99,44 @@ async def update_user_interaction(user_id: str, display_name: str) -> dict:
             "total_messages": 1,
             "streak_days": 1,
             "closeness": 0.0,
-            "notes": ""
-        })
+            "notes": "",
+            "user_memory": "",
+            "recent_servers": [location_entry] if location_entry else [],
+            "last_server": location_entry or ""
+        }
+        await users_col.insert_one(new_doc)
         return None  # First time — no previous data
 
     last_date = existing.get("last_interaction_date", "")
     streak = existing.get("streak_days", 0)
     closeness = existing.get("closeness", 0.0)
 
+    update_set = {"last_seen": now, "display_name": display_name}
+    if location_entry:
+        update_set["last_server"] = location_entry
+
     if last_date == today:
-        await users_col.update_one(
-            {"_id": user_id},
-            {"$set": {"last_seen": now, "display_name": display_name},
-             "$inc": {"total_messages": 1}}
-        )
+        update_ops = {"$set": update_set, "$inc": {"total_messages": 1}}
     else:
         yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
         streak = streak + 1 if last_date == yesterday else 1
         closeness = min(closeness + 0.5, 10.0)
+        update_set.update({
+            "last_interaction_date": today,
+            "streak_days": streak,
+            "closeness": closeness
+        })
+        update_ops = {"$set": update_set, "$inc": {"total_messages": 1}}
 
-        await users_col.update_one(
-            {"_id": user_id},
-            {"$set": {
-                "last_seen": now,
-                "last_interaction_date": today,
-                "display_name": display_name,
-                "streak_days": streak,
-                "closeness": closeness
-            }, "$inc": {"total_messages": 1}}
-        )
+    # Track recent servers (keep last 10 unique locations)
+    if location_entry:
+        recent = existing.get("recent_servers", [])
+        if location_entry not in recent:
+            recent.append(location_entry)
+            recent = recent[-10:]  # Keep last 10 unique
+        update_ops.setdefault("$set", {})["recent_servers"] = recent
 
+    await users_col.update_one({"_id": user_id}, update_ops)
     return existing  # Previous data for absence detection
 
 async def update_user_notes(user_id: str, notes: str):
@@ -107,5 +144,20 @@ async def update_user_notes(user_id: str, notes: str):
     await users_col.update_one(
         {"_id": user_id},
         {"$set": {"notes": notes}},
+        upsert=True
+    )
+
+async def get_user_memory(user_id: str) -> str:
+    """Get the user-level cross-server memory summary."""
+    doc = await users_col.find_one({"_id": user_id}, {"user_memory": 1})
+    if doc:
+        return doc.get("user_memory", "")
+    return ""
+
+async def update_user_memory(user_id: str, memory: str):
+    """Update the user-level cross-server memory summary."""
+    await users_col.update_one(
+        {"_id": user_id},
+        {"$set": {"user_memory": memory}},
         upsert=True
     )
