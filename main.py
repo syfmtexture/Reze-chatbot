@@ -15,6 +15,7 @@ from datetime import timedelta, datetime, timezone
 from keep_alive import keep_alive
 import db
 import bot_config
+from PIL import Image
 
 # Load environment variables
 load_dotenv()
@@ -63,6 +64,31 @@ def get_channel_id(config: dict, key: str, default) -> int:
     """Get a channel ID from server config, falling back to hardcoded default."""
     val = config.get(key, default)
     return int(val) if val else int(default)
+
+
+def translate_tags(query: str, is_booru: bool) -> str:
+    """
+    Translates a user/AI search query into proper search format.
+    - If is_booru is True, it converts terms to lower case and ensures 'reze_(chainsaw_man)' is used.
+    - If is_booru is False (e.g. Reddit), it keeps it normal: 'reze <query>'.
+    """
+    cleaned = query.lower().strip()
+    # Remove weird punctuation that could break tags (excluding parenthesis/underscores for tags like reze_(chainsaw_man))
+    cleaned = re.sub(r'[^\w\s\(\)_]', '', cleaned)
+    
+    if is_booru:
+        if "reze_(chainsaw_man)" not in cleaned and "reze" in cleaned:
+            cleaned = cleaned.replace("reze", "reze_(chainsaw_man)")
+        elif "reze" not in cleaned:
+            cleaned = f"reze_(chainsaw_man) {cleaned}"
+            
+        tags = [t.strip() for t in cleaned.split() if t.strip()]
+        return " ".join(tags)
+    else:
+        if "reze" not in cleaned:
+            cleaned = f"reze {cleaned}"
+        return cleaned
+
 
 # Creator Discord IDs (all alts of the same person)
 CREATOR_DISCORD_IDS = {1276870533811540031}  # Add all creator Discord user IDs here
@@ -825,144 +851,243 @@ async def on_message(message):
                         ai.channel_state[channel_id]["recent_memes"].append(meme_filename)
                         ai.channel_state[channel_id]["recent_memes"] = ai.channel_state[channel_id]["recent_memes"][-10:]
                         if not is_nsfw:
-                            ai.channel_state[channel_id]["image_cooldown"] = random.randint(2, 4) # Lock images for 2-4 messages
-
-                # --- Dynamic Web Image Extraction ---
+                            ai.channel_state[channel_id]                # --- Dynamic Web Image Extraction ---
                 web_meme_match = re.search(r'\[fetch_web:\s*(.*?)\]', response, re.IGNORECASE | re.DOTALL)
                 if web_meme_match and not meme_to_send:
                     query = web_meme_match.group(1).strip()
                     
                     if channel_id not in ai.channel_state:
                         ai.channel_state[channel_id] = {}
-                    if "recent_urls" not in ai.channel_state[channel_id]:
-                        ai.channel_state[channel_id]["recent_urls"] = []
-                        
-                    recent_urls = ai.channel_state[channel_id]["recent_urls"]
-                    
-                    # Clean query for multi-source
-                    clean_query = query.lower().replace("reze", "").strip()
                     
                     images_found = []
-                    # SFW uses Reddit. NSFW uses Danbooru/Gelbooru/Reddit
+                    # SFW uses Safebooru or Reddit. NSFW uses Danbooru/Gelbooru/Reddit
                     if is_nsfw:
                         source_choice = random.choice(["danbooru", "danbooru", "danbooru", "gelbooru", "gelbooru", "reddit_nsfw"])
                     else:
-                        source_choice = random.choice(["reddit_broad", "reddit_specific"])
+                        source_choice = random.choice(["safebooru", "safebooru", "reddit_broad", "reddit_specific"])
                     
                     try:
-                        timeout = aiohttp.ClientTimeout(total=10)
+                        timeout = aiohttp.ClientTimeout(total=15) # Boosted slightly for reliability
                         async with aiohttp.ClientSession(timeout=timeout) as session:
                             headers = {'User-agent': 'RezeBot/1.0'}
                             
+                            logger.info(f"[IMAGE FETCH] Source choice: {source_choice} | Query: '{query}'")
+                            
                             if source_choice == "danbooru":
                                 # Danbooru API — massive high-quality anime art archive (NSFW focused)
-                                db_tags = f"reze_(chainsaw_man) rating:explicit {clean_query}".strip()
-                                if not clean_query:
-                                    # Random NSFW tags for variety when no specific query
+                                db_query = translate_tags(query, is_booru=True)
+                                db_tags = f"{db_query} rating:explicit".strip()
+                                if not query:
                                     nsfw_variety = random.choice(["", "1girl", "solo", "breasts", "cleavage", "nude"])
                                     db_tags = f"reze_(chainsaw_man) rating:explicit {nsfw_variety}".strip()
                                 db_tags_encoded = urllib.parse.quote(db_tags)
-                                # Random page for variety (Danbooru has tons of pages)
                                 random_page = random.randint(1, 5)
                                 url = f"https://danbooru.donmai.us/posts.json?tags={db_tags_encoded}&limit=50&page={random_page}"
                                 async with session.get(url, headers=headers) as resp:
                                     if resp.status == 200:
                                         data = await resp.json()
                                         if isinstance(data, list):
-                                            # Danbooru returns direct list. Get file_url or large_file_url
                                             for post in data:
                                                 file_url = post.get('file_url') or post.get('large_file_url')
-                                                if file_url and any(file_url.endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.webp']):
+                                                if file_url:
+                                                    if file_url.startswith("//"):
+                                                        file_url = f"https:{file_url}"
+                                                    elif not file_url.startswith("http"):
+                                                        file_url = f"https://danbooru.donmai.us/{file_url.lstrip('/')}"
                                                     images_found.append(file_url)
                                                     
                             elif source_choice == "gelbooru":
                                 # Gelbooru API (NSFW focus)
-                                gb_query = urllib.parse.quote(f"reze_(chainsaw_man) rating:explicit {clean_query}".strip())
-                                random_pid = random.randint(0, 10)  # Random page offset for variety
-                                url = f"https://gelbooru.com/index.php?page=dapi&s=post&q=index&json=1&tags={gb_query}&limit=50&pid={random_pid}"
+                                gb_query = translate_tags(query, is_booru=True)
+                                gb_tags = f"{gb_query} rating:explicit".strip()
+                                gb_query_encoded = urllib.parse.quote(gb_tags)
+                                random_pid = random.randint(0, 10)
+                                url = f"https://gelbooru.com/index.php?page=dapi&s=post&q=index&json=1&tags={gb_query_encoded}&limit=50&pid={random_pid}"
                                 async with session.get(url, headers=headers) as resp:
                                     if resp.status == 200:
                                         data = await resp.json()
                                         if "post" in data:
-                                            images_found = [p['file_url'] for p in data['post'] if "file_url" in p]
-                                            
+                                            for p in data['post']:
+                                                f_url = p.get('file_url')
+                                                if f_url:
+                                                    if f_url.startswith("//"):
+                                                        f_url = f"https:{f_url}"
+                                                    elif not f_url.startswith("http"):
+                                                        f_url = f"https://gelbooru.com/{f_url.lstrip('/')}"
+                                                    images_found.append(f_url)
+                                                    
+                            elif source_choice == "safebooru":
+                                # Safebooru API (SFW Anime focus)
+                                sb_query = translate_tags(query, is_booru=True)
+                                sb_tags = f"{sb_query} rating:general".strip()
+                                sb_query_encoded = urllib.parse.quote(sb_tags)
+                                random_pid = random.randint(0, 5)
+                                url = f"https://safebooru.org/index.php?page=dapi&s=post&q=index&json=1&tags={sb_query_encoded}&limit=50&pid={random_pid}"
+                                async with session.get(url, headers=headers) as resp:
+                                    if resp.status == 200:
+                                        data = await resp.json()
+                                        if isinstance(data, list):
+                                            for p in data:
+                                                f_url = p.get('file_url') or p.get('image')
+                                                if f_url:
+                                                    if f_url.startswith("//"):
+                                                        f_url = f"https:{f_url}"
+                                                    elif not f_url.startswith("http"):
+                                                        f_url = f"https://safebooru.org/images/{p.get('directory')}/{p.get('image')}"
+                                                    images_found.append(f_url)
+                                                    
                             elif source_choice == "reddit_broad":
                                 # Broad reddit search (SFW)
-                                safe_query = urllib.parse.quote(f"reze {clean_query}".strip())
+                                safe_query = urllib.parse.quote(translate_tags(query, is_booru=False))
                                 url = f"https://www.reddit.com/r/ChainsawMan/search.json?q={safe_query}&restrict_sr=on&include_over_18=off&limit=50"
                                 async with session.get(url, headers=headers) as resp:
                                     if resp.status == 200:
                                         data = await resp.json()
                                         posts = data.get('data', {}).get('children', [])
-                                        images_found = [p['data']['url'] for p in posts if p['data']['url'].startswith('https://i.redd.it/')]
+                                        images_found = [p['data']['url'] for p in posts if p['data'].get('url') and p['data']['url'].startswith('https://i.redd.it/')]
                                         
                             elif source_choice == "reddit_specific":
                                 # Specific Reze subreddits (SFW)
-                                safe_query = urllib.parse.quote(f"reze {clean_query}".strip())
+                                safe_query = urllib.parse.quote(translate_tags(query, is_booru=False))
                                 url = f"https://www.reddit.com/r/ChainsawMan+RezeCult/search.json?q={safe_query}&restrict_sr=on&include_over_18=off&limit=60"
                                 async with session.get(url, headers=headers) as resp:
                                     if resp.status == 200:
                                         data = await resp.json()
                                         posts = data.get('data', {}).get('children', [])
-                                        images_found = [p['data']['url'] for p in posts if p['data']['url'].startswith('https://i.redd.it/')]
+                                        images_found = [p['data']['url'] for p in posts if p['data'].get('url') and p['data']['url'].startswith('https://i.redd.it/')]
                                                     
                             elif source_choice == "reddit_nsfw":
                                 # NSFW Reddit subreddits
-                                safe_query = urllib.parse.quote(f"reze {clean_query}")
+                                safe_query = urllib.parse.quote(translate_tags(query, is_booru=False))
                                 url = f"https://www.reddit.com/r/ChainsawManNSFW+hentai/search.json?q={safe_query}&restrict_sr=on&include_over_18=on&limit=60"
                                 async with session.get(url, headers=headers) as resp:
                                     if resp.status == 200:
                                         data = await resp.json()
                                         posts = data.get('data', {}).get('children', [])
-                                        images_found = [p['data']['url'] for p in posts if p['data']['url'].startswith('https://i.redd.it/')]
-                                        
-                            # Anti-Repetition filter (strict NO repeats)
-                            fresh_images = [img for img in images_found if img not in recent_urls]
-                            
-                            if not fresh_images and images_found:
-                                # Fallback: try Danbooru with random page if NSFW, else Reddit
+                                        images_found = [p['data']['url'] for p in posts if p['data'].get('url') and p['data']['url'].startswith('https://i.redd.it/')]
+
+                            # Standardize file extension check and strip query strings
+                            valid_images = []
+                            for img in images_found:
+                                clean_img = img.split('?')[0]
+                                if any(clean_img.lower().endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.webp', '.gif']):
+                                    valid_images.append(img)
+                            images_found = valid_images
+
+                            # Persistent Deduplication Check via MongoDB (Gather async queries)
+                            if images_found:
+                                is_sent_list = await asyncio.gather(*(db.is_image_sent(channel_id, url) for url in images_found))
+                                fresh_images = [img for img, is_sent in zip(images_found, is_sent_list) if not is_sent]
+                            else:
+                                fresh_images = []
+
+                            # Fallback if no fresh images are found from primary query
+                            if not fresh_images:
+                                logger.info(f"[IMAGE FETCH] No fresh images found for primary query. Running fallback...")
                                 if is_nsfw:
-                                    fb_page = random.randint(5, 20)
-                                    fallback_url = f"https://danbooru.donmai.us/posts.json?tags=reze_(chainsaw_man)&limit=30&page={fb_page}"
+                                    fb_page = random.randint(1, 15)
+                                    fallback_url = f"https://gelbooru.com/index.php?page=dapi&s=post&q=index&json=1&tags=reze_(chainsaw_man)+rating:explicit&limit=40&pid={fb_page}"
                                 else:
-                                    fallback_query = urllib.parse.quote("reze")
-                                    fallback_url = f"https://www.reddit.com/r/ChainsawMan+RezeCult/search.json?q={fallback_query}&restrict_sr=on&include_over_18=off&limit=60"
+                                    fb_page = random.randint(1, 10)
+                                    fallback_url = f"https://safebooru.org/index.php?page=dapi&s=post&q=index&json=1&tags=reze_(chainsaw_man)+rating:general&limit=40&pid={fb_page}"
                                 
                                 async with session.get(fallback_url, headers=headers) as resp:
                                     if resp.status == 200:
                                         data = await resp.json()
-                                        if is_nsfw and isinstance(data, list):
-                                            fallback_images = []
+                                        fallback_candidates = []
+                                        if isinstance(data, list):
                                             for p in data:
-                                                f_url = p.get('file_url') or p.get('large_file_url')
+                                                f_url = p.get('file_url') or p.get('image')
                                                 if f_url:
-                                                    if f_url.startswith("//"): f_url = f"https:{f_url}"
-                                                    elif not f_url.startswith("http"): f_url = f"https://danbooru.donmai.us/{f_url.lstrip('/')}"
-                                                    fallback_images.append(f_url)
-                                        elif is_nsfw and "post" in data:
-                                            fallback_images = [p['file_url'] for p in data['post'] if "file_url" in p]
-                                        else:
-                                            # Reddit Fallback Parsing
-                                            posts = data.get('data', {}).get('children', [])
-                                            fallback_images = [p['data']['url'] for p in posts if p['data']['url'].startswith('https://i.redd.it/')]
-                                        fresh_images = [img for img in fallback_images if img not in recent_urls]
+                                                    if f_url.startswith("//"):
+                                                        f_url = f"https:{f_url}"
+                                                    elif not f_url.startswith("http"):
+                                                        if "safebooru" in fallback_url:
+                                                            f_url = f"https://safebooru.org/images/{p.get('directory')}/{p.get('image')}"
+                                                        else:
+                                                            f_url = f"https://danbooru.donmai.us/{f_url.lstrip('/')}"
+                                                    fallback_candidates.append(f_url)
+                                        elif "post" in data:
+                                            for p in data['post']:
+                                                f_url = p.get('file_url')
+                                                if f_url:
+                                                    if f_url.startswith("//"):
+                                                        f_url = f"https:{f_url}"
+                                                    elif not f_url.startswith("http"):
+                                                        f_url = f"https://gelbooru.com/{f_url.lstrip('/')}"
+                                                    fallback_candidates.append(f_url)
+                                        
+                                        # Deduplicate fallback images
+                                        if fallback_candidates:
+                                            fb_is_sent_list = await asyncio.gather(*(db.is_image_sent(channel_id, url) for url in fallback_candidates))
+                                            fresh_images = [img for img, is_sent in zip(fallback_candidates, fb_is_sent_list) if not is_sent]
 
+                            # Final execution: loop through fresh_images and try to download/send/compress
                             if fresh_images:
-                                img_url = random.choice(fresh_images)
-                                ai.channel_state[channel_id]["recent_urls"].append(img_url)
-                                # Keep an aggressive memory of the last 200 URLs so she NEVER repeats them
-                                ai.channel_state[channel_id]["recent_urls"] = ai.channel_state[channel_id]["recent_urls"][-200:] 
+                                random.shuffle(fresh_images)
                                 
-                                # Add headers here to prevent 403 Forbidden from Safebooru/Danbooru hotlink protection
-                                async with session.get(img_url, headers=headers) as img_resp:
-                                    if img_resp.status == 200:
-                                        img_data = await img_resp.read()
-                                        file_ext = img_url.split('?')[0].split('.')[-1]
-                                        meme_to_send = discord.File(io.BytesIO(img_data), f"web_image.{file_ext}")
-                                        if not is_nsfw:
-                                            ai.channel_state[channel_id]["image_cooldown"] = random.randint(2, 4)
-                                    else:
-                                        logger.error(f"Failed to download image: {img_resp.status} - {img_url}")
+                                max_size_bytes = 8 * 1024 * 1024
+                                if message.guild:
+                                    max_size_bytes = message.guild.filesize_limit
+                                    
+                                success = False
+                                for attempt_url in fresh_images[:5]:
+                                    try:
+                                        logger.info(f"[IMAGE FETCH] Attempting to download: {attempt_url}")
+                                        async with session.get(attempt_url, headers=headers, timeout=10) as img_resp:
+                                            if img_resp.status == 200:
+                                                img_data = await img_resp.read()
+                                                original_size = len(img_data)
+                                                file_ext = attempt_url.split('?')[0].split('.')[-1].lower()
+                                                
+                                                # Safety Compress / Resize using Pillow
+                                                if original_size > max_size_bytes:
+                                                    logger.info(f"[IMAGE FETCH] Image size ({original_size / (1024*1024):.2f}MB) exceeds server limit ({max_size_bytes / (1024*1024):.2f}MB). Attempting dynamic PIL compression...")
+                                                    if file_ext != "gif":
+                                                        try:
+                                                            img = Image.open(io.BytesIO(img_data))
+                                                            if img.width > 2400 or img.height > 2400:
+                                                                img.thumbnail((2400, 2400))
+                                                            if img.mode in ("RGBA", "P"):
+                                                                img = img.convert("RGB")
+                                                            compressed_io = io.BytesIO()
+                                                            img.save(compressed_io, format="JPEG", quality=80)
+                                                            compressed_data = compressed_io.getvalue()
+                                                            
+                                                            if len(compressed_data) < max_size_bytes:
+                                                                img_data = compressed_data
+                                                                file_ext = "jpg"
+                                                                logger.info(f"[IMAGE FETCH] Successfully compressed static image from {original_size / (1024*1024):.2f}MB to {len(img_data) / (1024*1024):.2f}MB")
+                                                            else:
+                                                                logger.warning(f"[IMAGE FETCH] Compressed static image still too large ({len(compressed_data) / (1024*1024):.2f}MB). Skipping to next candidate.")
+                                                                continue
+                                                        except Exception as pil_err:
+                                                            logger.error(f"[IMAGE FETCH] PIL compression failed: {pil_err}")
+                                                            continue
+                                                    else:
+                                                        logger.warning(f"[IMAGE FETCH] GIF size too large and GIF compression is not supported. Skipping.")
+                                                        continue
+                                                
+                                                meme_to_send = discord.File(io.BytesIO(img_data), f"reze_image.{file_ext}")
+                                                
+                                                # Save URL in MongoDB database history (Strict Persistent Deduplication!)
+                                                await db.record_sent_image(channel_id, attempt_url)
+                                                logger.info(f"[IMAGE FETCH] Successfully routed and saved image to channel DB: {attempt_url}")
+                                                
+                                                if not is_nsfw:
+                                                    ai.channel_state[channel_id]["image_cooldown"] = random.randint(2, 4)
+                                                
+                                                success = True
+                                                break
+                                            else:
+                                                logger.warning(f"[IMAGE FETCH] HTTP download failed (Status {img_resp.status}) for URL: {attempt_url}")
+                                    except Exception as img_err:
+                                        logger.error(f"[IMAGE FETCH] Error processing image candidate {attempt_url}: {img_err}")
+                                
+                                if not success:
+                                    logger.error("[IMAGE FETCH] All 5 image download/compression candidates failed.")
+                            else:
+                                logger.warning("[IMAGE FETCH] No image URLs found from any source.")
                     except asyncio.TimeoutError:
                         logger.error("Web fetch timed out.")
                     except Exception as e:

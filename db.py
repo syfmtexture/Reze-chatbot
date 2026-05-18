@@ -161,3 +161,20 @@ async def update_user_memory(user_id: str, memory: str):
         {"$set": {"user_memory": memory}},
         upsert=True
     )
+
+
+# --- WEB IMAGE TRACKING ---
+
+async def is_image_sent(channel_id: str, url: str) -> bool:
+    """Checks if an image URL has already been sent in this channel."""
+    doc = await db['sent_images'].find_one({"channel_id": channel_id, "url": url})
+    return doc is not None
+
+
+async def record_sent_image(channel_id: str, url: str):
+    """Records a sent image URL in MongoDB to prevent future repetitions."""
+    await db['sent_images'].update_one(
+        {"channel_id": channel_id, "url": url},
+        {"$set": {"sent_at": datetime.now(timezone.utc)}},
+        upsert=True
+    )
