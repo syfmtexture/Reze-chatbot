@@ -1,6 +1,8 @@
 discord.py
 google-genai
 python-dotenv
-flaskmotor
-
+flask
+pymongo
+motor
 certifi
+Pillow
