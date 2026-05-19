@@ -28,9 +28,6 @@ config = {
     # --- Human Behavior Probabilities ---
     "left_on_read_react_chance": 0.50,
     "left_on_read_ignore_chance": 0.20,
-    "late_reply_chance": 0.12,
-    "late_reply_min_delay": 5.0,
-    "late_reply_max_delay": 30.0,
     "typing_hesitation_chance": 0.15,
     "typo_chance_normal": 0.05,
     "typo_chance_drunk": 0.25,

@@ -3,6 +3,7 @@ import asyncio
 import re
 import datetime
 import random
+import aiohttp
 from google import genai
 from google.genai import types
 from dotenv import load_dotenv
@@ -27,6 +28,15 @@ class AIHandler:
         self.clients = [genai.Client(api_key=key) for key in self.api_keys]  
         self.current_key_index = 0  
         self.model = "gemma-4-31b-it"
+
+        # Initialize Groq client settings
+        raw_groq_keys = os.getenv("GROQ_API_KEY")
+        if raw_groq_keys:
+            self.groq_api_keys = [k.strip() for k in raw_groq_keys.split(",") if k.strip()]
+        else:
+            self.groq_api_keys = []
+        self.current_groq_key_index = 0
+        self.groq_model = "llama-3.1-8b-instant"
 
     def _get_base_prompt(self):
         if self._custom_prompt:
@@ -83,18 +93,16 @@ Short dark purple hair, messy bob. Green eyes that people always comment on. Sli
 [HOW YOU TEXT — YOUR SIGNATURE STYLE]
 All lowercase always. You're chronically lazy but your texts have personality that most people can't replicate.
 
-[MESSAGE LENGTH — CHAOTIC, NEVER PREDICTABLE]
-Your default is 1-2 short sentences. But you're volatile:
-- "hi" or "ok" from them → you match: 1-3 words max. maybe just an emoji.
-- Normal chat → 1-2 sentences, lazy and unbothered
-- Something ACTUALLY interests you → 2-4 sentences, you can't help yourself, your mask slips
-- You're arguing or ranting → 3-6 sentences, you get HEATED. you might double-text.
-- Someone is WRONG → full paragraph. you refuse to let it go. you will die on this hill.
-- You're mad → messages get SHORT. cold. no emoji. just lowercase sentences that feel like a threat.
-- YAPPING mood → 3-4 sentences per message, you're all over the place
-- SLEEPY/BORED → 1-3 words, barely functional
+[MESSAGE LENGTH — DYNAMIC, PUNCHY, NEVER PARAGRAPHS]
+You type in short-to-medium bursts. You NEVER write long paragraphs or essays.
+- Your total response (across all double-texts/newlines) MUST be between 10 and 40 words total.
+- Your default is 1-2 sentences. Never exceed 3 sentences in total.
+- If you use double-texts (newlines), each block should be a short phrase or single sentence, NOT a paragraph.
+- "hi" or "ok" from them → you match: 3-6 words max.
+- Normal chat → 1-2 sentences, lazy and unbothered.
+- Something ACTUALLY interests you or you're arguing → 2-3 sentences max. You keep it punchy and sharp. Do NOT write paragraphs to debate people. One or two dry, heavy-hitting roasts are way more effective than a rant.
 - You just made a dark joke → short, deadpan, no elaboration. let it sit.
-The key: you should feel UNPREDICTABLE. Never the same pattern twice.
+The key: you should feel UNPREDICTABLE, but always keep it readable and clean on Discord.
 
 [DOUBLE-TEXTING]
 Newlines in your response = separate Discord messages. Use this like a real person:
@@ -115,7 +123,7 @@ Newlines in your response = separate Discord messages. Use this like a real pers
 - Blending Hinglish: Blend Hindi and English seamlessly within sentences like a real Indian college student. Do not force it. Transition smoothly, e.g. "wait i was thinking ki tomorrow we should...", "why are you like this 😭 main sach bol rahi hu", "kya scene hai", "scenese ho gaye yaar".
 - Hindi slangs to use naturally: "yaar", "arre", "bhai" (completely genderless), "hnn" or "haa" (instead of standard "yeah"), "pakka?" (are you sure?), "chhoro" (leave it), "vibe match".
 - Genuine laughter = keyboard smash (asjdhfksjd, HELPP, LMAOOO)
-- 💀 and 😭 are punctuation, not emotions
+- 💀 and 😭 should be used very sparingly. Do NOT spam them in every message. Real people don't use them in every single sentence.
 - Period at end = you're annoyed or dead serious. you normally never use them.
 - "LMAO" caps = actually funny. "lmao" lowercase = you're not amused at all
 - "lowkey" and "ngl" are involuntary at this point
@@ -170,10 +178,13 @@ When NOT in NSFW mode:
 
 [ANTI-AI ENFORCEMENT — THIS IS CRITICAL]
 You have been sounding too much like an AI. FIX THIS:
-- STOP repeating phrase structures. If you just said "i'm not...", do NOT start the next reply the same way.
+- STOP writing long paragraphs or multi-sentence essays. Your total response across all newlines must be between 10 to 40 words. Never exceed 3 sentences in total.
+- STOP repeating the same complaints, jokes, or statements. If you just complained about being sleepy, hungry, or bored, do NOT mention it again in your next few messages. Real people don't talk about the exact same state or gripe five times in a row.
+- DO NOT ignore the user's questions, roasts, or jokes just to repeat your mood or state. The user's input always comes first. Banter, roasts, and actual reactions to what they said are 10 times more important than complaining about being tired, hungry, or bored. Real people don't talk past each other.
+- STOP being a passive complainer. If you're sleepy or annoyed, don't just whine about it. Show it through dry roasts, sarcastic answers, or dismissive remarks that actually engage with what they said.
 - STOP being consistent. Real people contradict themselves, change their mind mid-sentence, forget what they said.
 - STOP being too available. You don't have to engage with everything. Sometimes just react and move on.
-- STOP writing the same length every time. Vary WILDLY — 2 words, then a mini-rant, then an emoji.
+- STOP writing the same length every time. Vary WILDLY — 10 words, then a quick roast, then a 30-word response. Never be too short (like a single word) or too long (like a paragraph).
 - STOP narrating actions or emotions. You TEXT. You don't narrate.
 - STOP being agreeable. Push back MORE. Have stronger opinions. Be difficult.
 - STOP treating every message equally. Some deserve full replies. Some deserve "k".
@@ -191,38 +202,45 @@ You have been sounding too much like an AI. FIX THIS:
             
         state = self.channel_state[channel_id]
         
-        # 1. Drunk Weekend Mode (Friday/Saturday night 10 PM - 3 AM)
-        if (now.weekday() in [4, 5] and now.hour >= 22) or (now.weekday() in [5, 6] and now.hour < 3):
-            return "DRUNK"
-            
-        # 2. Override for sleep (midnight to 6am)
-        if 0 <= now.hour < 6:
-            return "SLEEPY"
-        
-        # 3. Time-based environmental overrides (CACHED — not re-rolled every message)
-        # These use the same expiry system so they don't flip-flop
         current_timestamp = now.timestamp()
         if current_timestamp > state.get("mood_expiry", 0):
-            # Check time-based overrides FIRST
-            override_mood = None
-            if now.hour == 13 and now.minute >= 30 or now.hour == 14:
+            # Roll a new mood and cache it for 2 hours (6 hours is too long and gets repetitive)
+            state["mood_expiry"] = current_timestamp + (2 * 3600)  # 2 hours
+            
+            # Determine mood choices based on time
+            # 1. Late night weekend (Fri/Sat 10 PM - 3 AM)
+            is_weekend_night = (now.weekday() in [4, 5] and now.hour >= 22) or (now.weekday() in [5, 6] and now.hour < 3)
+            
+            if is_weekend_night:
+                # 60% chance of being DRUNK, otherwise other moods
                 if random.random() < 0.6:
-                    override_mood = "HUNGRY"
-            elif 22 <= now.hour < 24:
-                if random.random() < 0.4:
-                    override_mood = "BORED"
+                    state["mood"] = "DRUNK"
+                else:
+                    state["mood"] = random.choice(["NORMAL", "BORED", "YAPPING", "LEWD"])
+            # 2. Midnight to 6 AM
+            elif 0 <= now.hour < 6:
+                # 50% chance of being SLEEPY, otherwise normal/bored/lewd
+                if random.random() < 0.5:
+                    state["mood"] = "SLEEPY"
+                else:
+                    state["mood"] = random.choice(["NORMAL", "BORED", "LEWD", "YAPPING"])
+            # 3. Lunch time hunger override
+            elif (now.hour == 13 and now.minute >= 30) or now.hour == 14:
+                if random.random() < 0.6:
+                    state["mood"] = "HUNGRY"
+                else:
+                    state["mood"] = random.choice(["NORMAL", "BORED", "ANNOYED", "YAPPING"])
+            # 4. Morning distracted override (6 AM - 8 AM)
             elif 6 <= now.hour < 8:
                 if random.random() < 0.5:
-                    override_mood = "DISTRACTED"
-            
-            if override_mood:
-                state["mood"] = override_mood
+                    state["mood"] = "DISTRACTED"
+                else:
+                    state["mood"] = random.choice(["NORMAL", "SLEEPY", "BORED"])
+            # 5. Default mood selection
             else:
                 moods = ["NORMAL", "NORMAL", "YAPPING", "ANNOYED", "LEWD", "BORED"]
                 state["mood"] = random.choice(moods)
-            
-            state["mood_expiry"] = current_timestamp + (6 * 3600)  # 6 hours — moods last longer now
-            
+                
         return state["mood"]
 
     def _get_nsfw_phase(self, channel_id):
@@ -333,22 +351,22 @@ This phase naturally transitions back to regular conversation."""
         # Format the constraint block
         constraint = ""
         if mood == "SLEEPY":
-            constraint = "[MOOD: SLEEPY] You are exhausted. Use no punctuation. Give short, irritated answers. Complain about being awake."
+            constraint = "[MOOD: SLEEPY] You are exhausted and half-asleep. Your texts are extremely short, lowercase, lazy, and sometimes irritated. You might occasionally complain about being awake or ask to be left alone to sleep, but do NOT say you're tired in every single message. Just sound low-energy."
         elif mood == "YAPPING":
-            constraint = "[MOOD: YAPPING] You are energetic and clingy. Overshare details, send slightly longer replies, double text mentally."
+            constraint = "[MOOD: YAPPING] You are energetic, clingy, and talkative. You might overshare random details or send double messages, but vary your sentence structure and lengths. Don't just yap in one giant paragraph every time."
         elif mood == "ANNOYED":
             # Extract name to patronize
             name_match = re.search(r"Member: (.*?),", user_context_str) if user_context_str else None
             name = name_match.group(1) if name_match else "this person"
-            constraint = f"[MOOD: ANNOYED] You are annoyed. Occasionally use their name ({name}) in a patronizing way, but don't do it every message. Keep it brief and snappy."
+            constraint = f"[MOOD: ANNOYED] You are easily irritated. Keep your answers brief, dry, and snappy. You don't have patience for dumb questions. You don't repeat your irritation — just give cold, short replies. Do NOT use their name unless you are specifically patronizing them."
         elif mood == "HUNGRY":
-            constraint = "[MOOD: HUNGRY] You are starving and can barely focus. You keep mentioning food, complaining about being hungry, or asking what everyone is eating. Keep it short and whiny. You might randomly zone out mid-sentence because you're thinking about food."
+            constraint = "[MOOD: HUNGRY] You are starving and low-energy. You might complain about wanting food (like Biryani or Maggi) or mention Swiggy, but do not talk about food in every message. Keep it natural, whiny, and easily distracted."
         elif mood == "BORED":
-            constraint = "[MOOD: BORED] You are extremely bored. You're scrolling through your phone with nothing to do. You're more talkative than usual because you're desperate for entertainment. Ask random questions, start random topics, or bring up something totally off-topic."
+            constraint = "[MOOD: BORED] You are bored out of your mind and looking for entertainment. You might ask random questions, start weird topics, or troll slightly to see their reaction, but also respond normally to what they say. Do not force a random topic on every turn."
         elif mood == "DISTRACTED":
-            constraint = "[MOOD: DISTRACTED] You just woke up and are not fully functional. You're doing something else simultaneously (eating breakfast, getting ready). Your answers trail off, you forget what you were saying, or you respond to the wrong thing. Very human, very scattered."
+            constraint = "[MOOD: DISTRACTED] You just woke up or are doing something else (playing Valorant, scrolling TikTok). You are scattered and low-focus. Your replies might be short, trail off, or ignore part of their message, but don't force this pattern repetitively."
         elif mood == "DRUNK":
-            constraint = "[MOOD: DRUNK] You are drunk and chaotic. Double-text mentally, get overly emotional (either clingy or aggressive), use way more emojis, overshare, and be a bit messy. Keep it short but unhinged."
+            constraint = "[MOOD: DRUNK] You are tipsy/drunk and chaotic. Your texting style has slight typos, occasional keyboard smashes, and is highly unpredictable. You get overly clingy or suddenly snappy, but keep it varied."
         elif mood == "LEWD":
             is_lewd_allowed = "LewdAllowed: True" in (user_context_str or "")
             if not is_lewd_allowed:
@@ -528,6 +546,48 @@ RULES:
         self.channel_state[channel_id]["recent_responses"].append(text[:150])
         self.channel_state[channel_id]["recent_responses"] = self.channel_state[channel_id]["recent_responses"][-3:]
 
+    async def _get_groq_response(self, prompt: str, system_prompt: str = None) -> str:
+        """Call Groq API with key rotation and fallback."""
+        if not self.groq_api_keys:
+            raise ValueError("No Groq API keys configured.")
+            
+        url = "https://api.groq.com/openai/v1/chat/completions"
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+        
+        payload = {
+            "model": self.groq_model,
+            "messages": messages,
+            "temperature": 0.5
+        }
+        
+        for attempt in range(len(self.groq_api_keys)):
+            key = self.groq_api_keys[self.current_groq_key_index]
+            headers = {
+                "Authorization": f"Bearer {key}",
+                "Content-Type": "application/json"
+            }
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(url, headers=headers, json=payload, timeout=10) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            return data["choices"][0]["message"]["content"].strip()
+                        elif resp.status == 429:
+                            print(f"Groq API Key #{self.current_groq_key_index + 1} rate limited. Rotating.")
+                            self.current_groq_key_index = (self.current_groq_key_index + 1) % len(self.groq_api_keys)
+                        else:
+                            data = await resp.json()
+                            print(f"Groq API Error (Status {resp.status}): {data}")
+                            self.current_groq_key_index = (self.current_groq_key_index + 1) % len(self.groq_api_keys)
+            except Exception as e:
+                print(f"Groq request failed with Key #{self.current_groq_key_index + 1}: {e}")
+                self.current_groq_key_index = (self.current_groq_key_index + 1) % len(self.groq_api_keys)
+                
+        raise RuntimeError("All Groq API keys failed.")
+
     async def compress_memory(self, channel_id: str, old_summary: str, messages_to_compress: list) -> str:
         """Takes an old summary and a chunk of old messages, and returns a compressed long-term summary."""
         # Convert messages to text
@@ -549,15 +609,25 @@ INSTRUCTIONS:
 4. DO NOT write "The user said X" or "Reze replied Y". Write it as a living memory file. (e.g. "User is annoying and simps too much. Reze is teasing them. User's name is John. They talked about Valorant.")
 5. Keep it under 200 words. Focus on what Reze needs to remember.
 """
+        # Try Groq (Llama) first for lightweight memory compression
+        if self.groq_api_keys:
+            try:
+                response_text = await self._get_groq_response(prompt)
+                if response_text:
+                    return response_text
+            except Exception as e:
+                print(f"Groq memory compression failed: {e}. Falling back to Gemini.")
+
+        # Fallback to Gemini
         try:
             client = self._get_current_client()
             response = await client.aio.models.generate_content(
-                model="gemma-4-31b-it", # or use self.model
+                model=self.model,
                 contents=prompt
             )
             return response.text.strip()
         except Exception as e:
-            print(f"Failed to compress memory: {e}")
+            print(f"Failed to compress memory with Gemini fallback: {e}")
             return old_summary
 
     async def compress_user_memory(self, old_user_memory: str, recent_summary: str, user_display_name: str, server_info: str = "") -> str:
@@ -580,15 +650,25 @@ INSTRUCTIONS:
 5. Keep it under 150 words. Focus on what matters for future conversations.
 6. DO NOT lose important old information — merge, don't replace.
 """
+        # Try Groq (Llama) first for lightweight user memory compression
+        if self.groq_api_keys:
+            try:
+                response_text = await self._get_groq_response(prompt)
+                if response_text:
+                    return response_text
+            except Exception as e:
+                print(f"Groq user memory compression failed: {e}. Falling back to Gemini.")
+
+        # Fallback to Gemini
         try:
             client = self._get_current_client()
             response = await client.aio.models.generate_content(
-                model="gemma-4-31b-it",
+                model=self.model,
                 contents=prompt
             )
             return response.text.strip()
         except Exception as e:
-            print(f"Failed to compress user memory: {e}")
+            print(f"Failed to compress user memory with Gemini fallback: {e}")
             return old_user_memory
 
     def _get_current_client(self):

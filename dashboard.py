@@ -3,7 +3,7 @@ Reze Bot Dashboard — Flask API Backend
 Provides endpoints for the web dashboard to control the bot.
 """
 
-from flask import Blueprint, request, jsonify, session, send_from_directory
+from flask import Blueprint, request, jsonify, session
 import pymongo
 import certifi
 import os
@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-dashboard_bp = Blueprint('dashboard', __name__, static_folder='static')
+dashboard_bp = Blueprint('dashboard', __name__)
 
 # --- Bot references (set by main.py on startup) ---
 _bot = None
@@ -54,15 +54,10 @@ def require_auth(f):
     return decorated
 
 
-# --- Static File Serving ---
+# --- Root API Route ---
 @dashboard_bp.route('/')
-def serve_dashboard():
-    return send_from_directory('static', 'index.html')
-
-
-@dashboard_bp.route('/static/<path:filename>')
-def serve_static(filename):
-    return send_from_directory('static', filename)
+def api_root():
+    return jsonify({"status": "active", "message": "Makima Chatbot API is running"})
 
 
 # --- Auth Routes ---

@@ -8,7 +8,7 @@ import secrets
 log = logging.getLogger('werkzeug')
 log.setLevel(logging.ERROR)
 
-app = Flask('', static_folder='static')
+app = Flask(__name__)
 app.secret_key = os.getenv('FLASK_SECRET', secrets.token_hex(24))
 
 # Register Dashboard Blueprint

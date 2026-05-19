@@ -184,6 +184,9 @@ channel_locks = {}
 # Track last message time per channel (for unprompted messages)
 channel_last_activity = {}
 
+# Track channels currently undergoing memory compression to prevent concurrent API storms
+active_compressions = set()
+
 # Dry text detection (messages that deserve to be left on read)
 DRY_TEXTS = {
     "ok", "okay", "k", "kk", "lol", "lmao", "haha", "hah", "ha", "hmm",
@@ -454,11 +457,7 @@ async def on_message(message):
     if reply_context:
         formatted_user_message = f"{reply_context}\n{formatted_user_message}"
 
-    # --- LATE REPLY SIMULATION (she was doing something else) ---
-    # 12% chance she takes 5-30 extra seconds to even start reading the message
-    if random.random() < bot_config.get('late_reply_chance', 0.12):
-        late_delay = random.uniform(bot_config.get('late_reply_min_delay', 5.0), bot_config.get('late_reply_max_delay', 30.0))
-        await asyncio.sleep(late_delay)
+    # (Late reply simulation removed to eliminate response delay)
     
     
     # --- ENERGY MATCHING: Detect if user is hyped (ALL CAPS, excited) ---
@@ -694,32 +693,39 @@ async def on_message(message):
 
             # --- Rolling Summarization (Memory Compression) ---
             # If the recent message history exceeds 20 messages, spawn a background task to compress the oldest 10 into the summary
-            if len(messages) + 2 >= 20:
+            # We enforce a lock using active_compressions to prevent multiple concurrent compression jobs for the same channel
+            if len(messages) + 2 >= 20 and channel_id not in active_compressions:
+                active_compressions.add(channel_id)
                 async def compress_and_save():
-                    current_data = await db.get_channel_memory(channel_id)
-                    current_msgs = current_data["messages"]
-                    
-                    if len(current_msgs) >= 20:
-                        # Compress everything EXCEPT the 10 most recent messages
-                        msgs_to_compress = current_msgs[:-10]
-                        keep_msgs = current_msgs[-10:] # The 10 most recent stay in raw memory
+                    try:
+                        current_data = await db.get_channel_memory(channel_id)
+                        current_msgs = current_data["messages"]
                         
-                        logger.info(f"Triggering background memory compression for channel {channel_id}...")
-                        new_summary = await ai.compress_memory(channel_id, long_term_summary, msgs_to_compress)
-                        
-                        # Save the new summary and trim the raw message list
-                        await db.update_summary_and_trim(channel_id, new_summary, keep_msgs)
-                        logger.info(f"Memory compressed successfully for channel {channel_id}.")
+                        if len(current_msgs) >= 20:
+                            # Compress everything EXCEPT the 10 most recent messages
+                            msgs_to_compress = current_msgs[:-10]
+                            keep_msgs = current_msgs[-10:] # The 10 most recent stay in raw memory
+                            
+                            logger.info(f"Triggering background memory compression for channel {channel_id}...")
+                            new_summary = await ai.compress_memory(channel_id, long_term_summary, msgs_to_compress)
+                            
+                            # Save the new summary and trim the raw message list
+                            await db.update_summary_and_trim(channel_id, new_summary, keep_msgs)
+                            logger.info(f"Memory compressed successfully for channel {channel_id}.")
 
-                        # Also update user-level cross-server memory
-                        try:
-                            old_user_mem = await db.get_user_memory(user_id_str)
-                            srv_info = f"{server_name}/#{channel_name}" if server_name else "DM"
-                            new_user_mem = await ai.compress_user_memory(old_user_mem, new_summary, nickname, srv_info)
-                            await db.update_user_memory(user_id_str, new_user_mem)
-                            logger.info(f"User memory updated for {nickname} ({user_id_str}).")
-                        except Exception as e:
-                            logger.error(f"Failed to update user memory: {e}")
+                            # Also update user-level cross-server memory
+                            try:
+                                old_user_mem = await db.get_user_memory(user_id_str)
+                                srv_info = f"{server_name}/#{channel_name}" if server_name else "DM"
+                                new_user_mem = await ai.compress_user_memory(old_user_mem, new_summary, nickname, srv_info)
+                                await db.update_user_memory(user_id_str, new_user_mem)
+                                logger.info(f"User memory updated for {nickname} ({user_id_str}).")
+                            except Exception as e:
+                                logger.error(f"Failed to update user memory: {e}")
+                    except Exception as e:
+                        logger.error(f"Error during memory compression: {e}")
+                    finally:
+                        active_compressions.discard(channel_id)
                         
                 bot.loop.create_task(compress_and_save())
 
