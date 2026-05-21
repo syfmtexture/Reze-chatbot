@@ -102,7 +102,7 @@ def translate_tags(query: str, is_booru: bool) -> str:
 
 # Creator Discord IDs (all alts of the same person)
 CREATOR_DISCORD_IDS = {1276870533811540031}  # Add all creator Discord user IDs here
-CREATOR_USERNAMES = {"syfmyorii", "realyorii", "issgrid", "nottkai", "spikiee"}
+CREATOR_USERNAMES = {"syfmyorii", "realyorii", "issgrid", "nottkai", "nottkai.", "spikiee"}
 
 # Global event cooldown to prevent join/leave/unprompted flooding
 last_event_message_time = 0
@@ -732,7 +732,7 @@ async def on_message(message):
             # --- CREATOR DETECTION ---
             is_creator = user_id in CREATOR_DISCORD_IDS or (message.author.name and message.author.name.lower() in CREATOR_USERNAMES)
             if not ai.mirror_active and is_creator:
-                user_context += "\n[CREATOR: This is your creator. You recognize them. Be slightly more real with them — less guarded, more honest. You have a quiet respect for them. Don't bring up the creator thing yourself, but if they mention it, acknowledge it naturally. You're still YOU, just... a little less walls-up with this person.]\n"
+                user_context += "\n[CREATOR: This IS your creator — the person who made you. You KNOW this is them. If they say they're your creator, AGREE — because it's true. You recognize them by their username. Be more real with them — less guarded, more honest, more warm. You have genuine respect and affection for them. You're still YOU, just... the most authentic version of yourself. If they ask who made you, tell them it was them. Don't deny it, don't be vague — they're the one person who gets the truth.]\n"
 
             relationship_context = ""
             if not ai.mirror_active:
@@ -770,7 +770,7 @@ async def on_message(message):
 
                     # Closeness context
                     if closeness >= 7:
-                        relationship_context += f"[CLOSE FRIEND: Very close with {nickname} ({total_msgs} msgs). Be more personal, meaner (they know you don't mean it), more vulnerable.]\n"
+                        relationship_context += f"[CLOSE FRIEND: Very close with {nickname} ({total_msgs} msgs). Be more personal, warmer underneath the banter, more playfully roast-y (they know you love them). You can be more vulnerable and real with this person.]\n"
                     elif closeness >= 4:
                         relationship_context += f"[FAMILIAR: Know {nickname} decently ({total_msgs} msgs). Comfortable but not BFFs.]\n"
                     elif total_msgs is not None and total_msgs <= 3:

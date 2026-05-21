@@ -16,8 +16,8 @@ config = {
     # --- Grudge System ---
     "grudge_trigger_count": 4,
     "grudge_trigger_window": 60,
-    "grudge_duration_min": 300,
-    "grudge_duration_max": 600,
+    "grudge_duration_min": 120,
+    "grudge_duration_max": 300,
 
     # --- Media Pipeline ---
     "image_cooldown_min": 2,
@@ -26,8 +26,8 @@ config = {
     "max_file_size_mb": 8,
 
     # --- Human Behavior Probabilities ---
-    "left_on_read_react_chance": 0.50,
-    "left_on_read_ignore_chance": 0.20,
+    "left_on_read_react_chance": 0.30,
+    "left_on_read_ignore_chance": 0.10,
     "typing_hesitation_chance": 0.15,
     "typo_chance_normal": 0.05,
     "typo_chance_drunk": 0.25,
@@ -74,7 +74,7 @@ config = {
     "return_detection_days": 3,
 
     # --- Mood Pool ---
-    "mood_pool": ["NORMAL", "NORMAL", "YAPPING", "ANNOYED", "LEWD", "BORED"],
+    "mood_pool": ["NORMAL", "NORMAL", "NORMAL", "YAPPING", "LEWD", "BORED"],
 
     # --- Lists ---
     "dry_texts": [
