@@ -74,9 +74,9 @@ async def get_user_data(user_id: str) -> dict:
     """Fetches a user's relationship data. Returns None if user not found."""
     return await users_col.find_one({"_id": user_id})
 
-async def update_user_interaction(user_id: str, display_name: str, server_name: str = None, channel_name: str = None) -> dict:
+async def update_user_interaction(user_id: str, display_name: str, server_name: str = None, channel_name: str = None, message_content: str = None) -> dict:
     """Called on every interaction. Returns PREVIOUS user data (for absence detection), then updates.
-    Now also tracks which servers/channels the user has talked to Reze in."""
+    Now also tracks which servers/channels the user has talked to Reze in and rolling recent messages."""
     now = datetime.now(timezone.utc)
     today = now.strftime("%Y-%m-%d")
 
@@ -102,7 +102,8 @@ async def update_user_interaction(user_id: str, display_name: str, server_name: 
             "notes": "",
             "user_memory": "",
             "recent_servers": [location_entry] if location_entry else [],
-            "last_server": location_entry or ""
+            "last_server": location_entry or "",
+            "recent_messages": [message_content] if message_content else []
         }
         await users_col.insert_one(new_doc)
         return None  # First time — no previous data
@@ -135,6 +136,14 @@ async def update_user_interaction(user_id: str, display_name: str, server_name: 
             recent.append(location_entry)
             recent = recent[-10:]  # Keep last 10 unique
         update_ops.setdefault("$set", {})["recent_servers"] = recent
+
+    if message_content:
+        update_ops["$push"] = {
+            "recent_messages": {
+                "$each": [message_content],
+                "$slice": -300
+            }
+        }
 
     await users_col.update_one({"_id": user_id}, update_ops)
     return existing  # Previous data for absence detection
@@ -178,3 +187,37 @@ async def record_sent_image(channel_id: str, url: str):
         {"$set": {"sent_at": datetime.now(timezone.utc)}},
         upsert=True
     )
+
+
+# --- MIRROR STATE TRACKING ---
+
+mirror_state_col = db['mirror_state']
+
+async def get_mirror_state() -> dict:
+    """Fetches the active mirrored user state (if any)."""
+    doc = await mirror_state_col.find_one({"_id": "active_mirror"})
+    return doc or {}
+
+async def set_mirror_state(target_user_id: str, target_name: str, profile: str):
+    """Sets/updates the active mirrored user state."""
+    await mirror_state_col.update_one(
+        {"_id": "active_mirror"},
+        {"$set": {
+            "target_user_id": target_user_id,
+            "target_name": target_name,
+            "profile": profile,
+            "active": True
+        }},
+        upsert=True
+    )
+
+async def clear_mirror_state():
+    """Clears the active mirrored user state."""
+    await mirror_state_col.delete_one({"_id": "active_mirror"})
+
+async def get_user_recent_messages(user_id: str) -> list:
+    """Fetches the user's stored recent messages."""
+    doc = await users_col.find_one({"_id": user_id}, {"recent_messages": 1})
+    if doc:
+        return doc.get("recent_messages", [])
+    return []
