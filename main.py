@@ -305,10 +305,17 @@ async def execute_mirror(message, target_member):
         async for msg in message.channel.history(limit=1000):
             if msg.author.id == target_member.id and msg.content:
                 content = msg.content.strip()
-                if not (content.startswith("?") or bot.user in msg.mentions):
-                    target_messages.append(content)
-                    if len(target_messages) >= 300:
-                        break
+                if not content.startswith("?"):
+                    # Strip bot mentions to keep clean texting data
+                    cleaned_msg = content
+                    for mention in msg.mentions:
+                        if mention.id == bot.user.id:
+                            cleaned_msg = cleaned_msg.replace(f"<@{mention.id}>", "").replace(f"<@!{mention.id}>", "")
+                    cleaned_msg = cleaned_msg.strip()
+                    if cleaned_msg:
+                        target_messages.append(cleaned_msg)
+                        if len(target_messages) >= 300:
+                            break
         
         # If we got fewer than 100 messages, fall back to the MongoDB recent messages list
         if len(target_messages) < 100:
@@ -774,7 +781,7 @@ async def on_message(message):
                     elif closeness >= 4:
                         relationship_context += f"[FAMILIAR: Know {nickname} decently ({total_msgs} msgs). Comfortable but not BFFs.]\n"
                     elif total_msgs is not None and total_msgs <= 3:
-                        relationship_context += f"[NEW PERSON: Barely know {nickname}. Be slightly guarded, less personal.]\n"
+                        relationship_context += f"[NEW PERSON: Barely know {nickname}. Be friendly, playful, and teasing, but keep personal details to yourself. Never sound dry or cold.]\n"
 
                     # User relationship notes (per-channel)
                     if user_notes:
@@ -784,7 +791,7 @@ async def on_message(message):
                     if user_memory:
                         relationship_context += f"[YOUR GLOBAL MEMORY OF THIS PERSON (across all servers): {user_memory}]\n"
                 else:
-                    relationship_context += f"[FIRST MEETING: Never talked to {nickname} before. Be naturally curious but guarded.]\n"
+                    relationship_context += f"[FIRST MEETING: Never talked to {nickname} before. Be naturally curious, playful, and talkative, but keep personal details to yourself. Keep the conversation rolling with good energy.]\n"
 
                 if relationship_context:
                     user_context += f"\n{relationship_context}"
@@ -822,7 +829,7 @@ async def on_message(message):
 
             # --- PERSONALITY MIRRORING STYLE GUIDE ---
             if ai.mirror_active and ai.mirror_profile:
-                user_context += f"\n[PERSONALITY MIRROR ACTIVE: You are mirroring {ai.mirror_target_name}'s texting style. Keep your core Reze personality but adopt their style guidelines:\n{ai.mirror_profile}]\n"
+                user_context += f"\n[PERSONALITY MIRROR ACTIVE: You are mirroring {ai.mirror_target_name}. Adopt their exact texting style, personality traits, and overall conversational vibe based on this profile:\n{ai.mirror_profile}]\n"
 
             # Fetch memory from MongoDB
             memory_data = await db.get_channel_memory(channel_id)
