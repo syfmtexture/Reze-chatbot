@@ -1684,8 +1684,9 @@ async def on_member_join(member):
     global last_event_message_time
     if member.bot:
         return
-    TARGET_CHANNEL_ID = 1492604782874067075
-    channel = bot.get_channel(TARGET_CHANNEL_ID)
+    g_cfg = await get_guild_config(member.guild.id) if member.guild else {}
+    target_ch_id = get_channel_id(g_cfg, 'target_channel_id', DEFAULT_TARGET_CHANNEL_ID)
+    channel = bot.get_channel(target_ch_id)
     if not channel:
         return
     # Global cooldown: don't flood the chat with event messages
@@ -1705,8 +1706,9 @@ async def on_member_remove(member):
     global last_event_message_time
     if member.bot:
         return
-    TARGET_CHANNEL_ID = 1492604782874067075
-    channel = bot.get_channel(TARGET_CHANNEL_ID)
+    g_cfg = await get_guild_config(member.guild.id) if member.guild else {}
+    target_ch_id = get_channel_id(g_cfg, 'target_channel_id', DEFAULT_TARGET_CHANNEL_ID)
+    channel = bot.get_channel(target_ch_id)
     if not channel:
         return
     # Global cooldown: don't flood the chat with event messages
@@ -1727,8 +1729,9 @@ async def on_member_update(before, after):
     if before.bot:
         return
     if before.nick != after.nick and after.nick is not None:
-        TARGET_CHANNEL_ID = 1492604782874067075
-        channel = bot.get_channel(TARGET_CHANNEL_ID)
+        g_cfg = await get_guild_config(before.guild.id) if before.guild else {}
+        target_ch_id = get_channel_id(g_cfg, 'target_channel_id', DEFAULT_TARGET_CHANNEL_ID)
+        channel = bot.get_channel(target_ch_id)
         if channel and time.time() - last_event_message_time >= EVENT_COOLDOWN_SECONDS and random.random() < 0.12:
             await asyncio.sleep(random.uniform(20, 90))
             responses = [
@@ -1748,8 +1751,9 @@ async def on_voice_state_update(member, before, after):
     global last_event_message_time
     if member.bot:
         return
-    TARGET_CHANNEL_ID = 1492604782874067075
-    channel = bot.get_channel(TARGET_CHANNEL_ID)
+    g_cfg = await get_guild_config(member.guild.id) if member.guild else {}
+    target_ch_id = get_channel_id(g_cfg, 'target_channel_id', DEFAULT_TARGET_CHANNEL_ID)
+    channel = bot.get_channel(target_ch_id)
     if not channel:
         return
     # Global cooldown

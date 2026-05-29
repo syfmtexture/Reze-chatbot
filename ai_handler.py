@@ -6,6 +6,7 @@ import random
 import aiohttp
 from google import genai
 from google.genai import types
+import time
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -209,6 +210,7 @@ When NOT in NSFW mode:
             self.channel_state[channel_id] = {"slangs": [], "emojis": [], "mood": "NORMAL", "mood_expiry": 0}
             
         state = self.channel_state[channel_id]
+        state["last_active"] = now.timestamp()
         
         current_timestamp = now.timestamp()
         if current_timestamp > state.get("mood_expiry", 0):
@@ -257,6 +259,7 @@ When NOT in NSFW mode:
             self.channel_state[channel_id] = {}
         
         nsfw_state = self.channel_state[channel_id]
+        nsfw_state["last_active"] = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5, minutes=30))).timestamp()
         msg_count = nsfw_state.get("nsfw_msg_count", 0)
         nsfw_state["nsfw_msg_count"] = msg_count + 1
         
@@ -628,11 +631,28 @@ INSTRUCTIONS:
     def _get_current_client(self):
         return self.clients[self.current_key_index]
 
+    def _update_channel_activity(self, channel_id: str):
+        """Update last active timestamp for a channel and clean up old channel states to prevent memory leaks."""
+        if channel_id not in self.channel_state:
+            self.channel_state[channel_id] = {"slangs": [], "emojis": [], "mood": "NORMAL", "mood_expiry": 0}
+        
+        self.channel_state[channel_id]["last_active"] = time.time()
+        
+        # Clean up channels inactive for more than 6 hours (21600 seconds)
+        now = time.time()
+        expired_channels = []
+        for cid, state in list(self.channel_state.items()):
+            if cid != "default" and now - state.get("last_active", now) > 21600:
+                expired_channels.append(cid)
+        for cid in expired_channels:
+            del self.channel_state[cid]
+
     def _rotate_client(self):
         self.current_key_index = (self.current_key_index + 1) % len(self.clients)
         print(f"Rotating to API Key #{self.current_key_index + 1}")
 
     async def get_ai_response(self, user_message: str, history: list = None, attachments: list = None, is_hinglish: bool = False, user_context: str = None, channel_id: str = "default", long_term_summary: str = "") -> str:
+        self._update_channel_activity(channel_id)
         full_system_instruction = self._build_dynamic_prompt(user_context, is_hinglish, channel_id, long_term_summary)
 
         msg_lower = user_message.strip().lower()
@@ -669,7 +689,10 @@ INSTRUCTIONS:
 
         models_to_try = ["gemma-4-31b-it", "gemma-4-26b-a4b-it", "gemini-3.1-flash-lite"]
         
-        for model_name in models_to_try:
+        for idx, model_name in enumerate(models_to_try):
+            if idx > 0:
+                # Small sleep when transitioning between fallback models
+                await asyncio.sleep(0.5)
             for attempt in range(len(self.clients)):
                 client = self._get_current_client()
                 try:
@@ -696,8 +719,12 @@ INSTRUCTIONS:
                     print(f"Model {model_name} failed with Key #{self.current_key_index + 1}: {e}")
                     
                     # Rotate key on rate limits or quota issues
-                    if any(err in error_msg for err in ["429", "500", "503", "quota", "exhausted", "internal"]):
+                    is_rate_limit = any(err in error_msg for err in ["429", "500", "503", "quota", "exhausted", "internal"])
+                    if is_rate_limit:
                         self._rotate_client()
+                        backoff_duration = 2 ** attempt
+                        print(f"Rate limit hit. Sleeping for {backoff_duration} seconds before retry...")
+                        await asyncio.sleep(backoff_duration)
                     else:
                         pass
             
