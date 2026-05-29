@@ -189,31 +189,7 @@ async def record_sent_image(channel_id: str, url: str):
     )
 
 
-# --- MIRROR STATE TRACKING ---
-
-mirror_state_col = db['mirror_state']
-
-async def get_mirror_state() -> dict:
-    """Fetches the active mirrored user state (if any)."""
-    doc = await mirror_state_col.find_one({"_id": "active_mirror"})
-    return doc or {}
-
-async def set_mirror_state(target_user_id: str, target_name: str, profile: str):
-    """Sets/updates the active mirrored user state."""
-    await mirror_state_col.update_one(
-        {"_id": "active_mirror"},
-        {"$set": {
-            "target_user_id": target_user_id,
-            "target_name": target_name,
-            "profile": profile,
-            "active": True
-        }},
-        upsert=True
-    )
-
-async def clear_mirror_state():
-    """Clears the active mirrored user state."""
-    await mirror_state_col.delete_one({"_id": "active_mirror"})
+# --- MIRROR STATE TRACKING REMOVED ---
 
 async def get_user_recent_messages(user_id: str) -> list:
     """Fetches the user's stored recent messages."""

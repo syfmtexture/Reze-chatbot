@@ -278,17 +278,6 @@ async def on_ready():
     init_bot_refs(bot, ai, grudge_list, channel_last_activity, unprompted_waiting_for_reply, user_msg_timestamps)
     print("Dashboard initialized with bot references.")
     
-    # Load mirrored state if active
-    try:
-        state = await db.get_mirror_state()
-        if state and state.get("active"):
-            ai.mirror_active = True
-            ai.mirror_target_id = state.get("target_user_id")
-            ai.mirror_target_name = state.get("target_name")
-            ai.mirror_profile = state.get("profile")
-            print(f"Loaded active mirror state: mirroring user {ai.mirror_target_name} ({ai.mirror_target_id})")
-    except Exception as e:
-        print(f"Failed to load mirror state on startup: {e}")
 
     # Start background tasks
     bot.loop.create_task(unprompted_message_loop())
@@ -296,141 +285,10 @@ async def on_ready():
     bot.loop.create_task(status_cycling_loop())
     bot.loop.create_task(story_posting_loop())
 
-async def execute_mirror(message, target_member):
-    try:
-        await message.channel.send(f"fine. let me stalk {target_member.display_name} for a second...")
-        
-        # Gather up to 300 messages from the target user
-        target_messages = []
-        async for msg in message.channel.history(limit=1000):
-            if msg.author.id == target_member.id and msg.content:
-                content = msg.content.strip()
-                if not content.startswith("?"):
-                    # Strip bot mentions to keep clean texting data
-                    cleaned_msg = content
-                    for mention in msg.mentions:
-                        if mention.id == bot.user.id:
-                            cleaned_msg = cleaned_msg.replace(f"<@{mention.id}>", "").replace(f"<@!{mention.id}>", "")
-                    cleaned_msg = cleaned_msg.strip()
-                    if cleaned_msg:
-                        target_messages.append(cleaned_msg)
-                        if len(target_messages) >= 300:
-                            break
-        
-        # If we got fewer than 100 messages, fall back to the MongoDB recent messages list
-        if len(target_messages) < 100:
-            db_messages = await db.get_user_recent_messages(str(target_member.id))
-            for m in db_messages:
-                if m not in target_messages:
-                    target_messages.append(m)
-                    if len(target_messages) >= 300:
-                        break
-                        
-        if not target_messages:
-            await message.reply("i couldn't find any recent messages from them... are they a ghost or smth?")
-            return
-            
-        await message.channel.send("running linguistic analysis on their style...")
-        profile = await ai.analyze_user_personality(target_member.display_name, target_messages)
-        
-        # Persist the state in DB and cache
-        await db.set_mirror_state(str(target_member.id), target_member.display_name, profile)
-        ai.mirror_active = True
-        ai.mirror_target_id = str(target_member.id)
-        ai.mirror_target_name = target_member.display_name
-        ai.mirror_profile = profile
-        
-        # Apply guild nickname
-        if message.guild:
-            try:
-                await message.guild.me.edit(nick=target_member.display_name)
-            except Exception as nick_err:
-                print(f"Failed to change guild nickname: {nick_err}")
-
-        # Clear presence activity during mirroring
-        try:
-            await bot.change_presence(activity=None)
-        except Exception as pres_err:
-            print(f"Failed to clear presence activity: {pres_err}")
-            
-        await message.channel.send("done. i've updated my server nickname and personality!")
-    except Exception as e:
-        logger.error(f"Error executing mirror command: {e}")
-        await message.channel.send("something broke while trying to mirror them 💀")
-
-async def execute_unmirror(message):
-    try:
-        await message.channel.send("fine... unmirroring. giving you your normal bot back.")
-        
-        # Revert guild nickname
-        if message.guild:
-            try:
-                await message.guild.me.edit(nick=None)
-            except Exception as nick_err:
-                print(f"Failed to reset guild nickname: {nick_err}")
-            
-        # Clear DB and cache
-        await db.clear_mirror_state()
-        ai.mirror_active = False
-        ai.mirror_target_id = None
-        ai.mirror_target_name = None
-        ai.mirror_profile = ""
-
-        # Reset presence status
-        try:
-            await bot.change_presence(status=discord.Status.online, activity=None)
-        except Exception as pres_err:
-            print(f"Failed to reset presence on unmirror: {pres_err}")
-        
-        await message.channel.send("thank god, being someone else was exhausting.")
-    except Exception as e:
-        logger.error(f"Error executing unmirror command: {e}")
-        await message.channel.send("failed to unmirror properly 💀 try again later.")
-
 @bot.event
 async def on_message(message):
-    # Ignore messages from bots
     if message.author.bot:
         return
-
-    clean_content = message.content.strip()
-    
-    # Check for prefix commands (mirror / unmirror)
-    if clean_content.startswith("?mirror") or clean_content.startswith("?unmirror"):
-        if message.author.id != 1276870533811540031:
-            try:
-                await message.reply("you don't have permission to tell me what to do lol.")
-            except:
-                pass
-            return
-            
-        if clean_content.startswith("?mirror"):
-            parts = clean_content.split(None, 1)
-            cmd_arg = parts[1].strip() if len(parts) > 1 else ""
-            
-            if cmd_arg.lower() in ["reset", "stop"]:
-                await execute_unmirror(message)
-                return
-                
-            target_member = None
-            for mention in message.mentions:
-                if mention.id != bot.user.id:
-                    target_member = mention
-                    break
-            
-            if not target_member:
-                try:
-                    await message.reply("you need to tag someone to mirror them, dummy.")
-                except:
-                    pass
-                return
-                
-            await execute_mirror(message, target_member)
-            return
-            
-        elif clean_content.startswith("?unmirror"):
-            await execute_unmirror(message)
-            return
 
     is_dm = isinstance(message.channel, discord.DMChannel)
     ALLOWED_DM_USER_ID = 1276870533811540031
@@ -481,8 +339,7 @@ async def on_message(message):
         if not (is_mentioned or is_reply_to_bot):
             if message.channel.id == target_ch_id:
                 msg_lower = message.content.lower()
-                trigger_name = ai.mirror_target_name.lower() if (ai.mirror_active and ai.mirror_target_name) else "reze"
-                if trigger_name in msg_lower:
+                if "reze" in msg_lower:
                     will_eavesdrop = True
                 elif random.random() < 0.05: # 5% random chance
                     will_eavesdrop = True
@@ -507,24 +364,23 @@ async def on_message(message):
     user_msg_timestamps[user_id].append(current_time)
 
     # --- GRUDGE SYSTEM: Check if Reze is ignoring this user ---
-    if not ai.mirror_active:
-        if user_id in grudge_list:
-            if current_time < grudge_list[user_id]:
-                # She's still mad. Complete silence.
-                return
-            else:
-                # Grudge expired
-                del grudge_list[user_id]
-        
-        # --- GRUDGE TRIGGER: If someone pings her 4+ times in 60 seconds, she holds a grudge ---
-        recent_pings = [t for t in user_msg_timestamps[user_id] if current_time - t < bot_config.get('grudge_trigger_window', 60)]
-        if len(recent_pings) >= bot_config.get('grudge_trigger_count', 4) and user_id not in grudge_list:
-            grudge_list[user_id] = current_time + random.randint(bot_config.get('grudge_duration_min', 300), bot_config.get('grudge_duration_max', 600))
-            try:
-                await message.add_reaction("🙄")
-            except:
-                pass
+    if user_id in grudge_list:
+        if current_time < grudge_list[user_id]:
+            # She's still mad. Complete silence.
             return
+        else:
+            # Grudge expired
+            del grudge_list[user_id]
+    
+    # --- GRUDGE TRIGGER: If someone pings her 4+ times in 60 seconds, she holds a grudge ---
+    recent_pings = [t for t in user_msg_timestamps[user_id] if current_time - t < bot_config.get('grudge_trigger_window', 60)]
+    if len(recent_pings) >= bot_config.get('grudge_trigger_count', 4) and user_id not in grudge_list:
+        grudge_list[user_id] = current_time + random.randint(bot_config.get('grudge_duration_min', 300), bot_config.get('grudge_duration_max', 600))
+        try:
+            await message.add_reaction("🙄")
+        except:
+            pass
+        return
 
     # Clean the content
     content = message.content
@@ -587,20 +443,19 @@ async def on_message(message):
 
     # --- LEFT ON READ: Dry text detection ---
     # If the message is just a dry one-word reply, she might just react and not respond
-    if not ai.mirror_active:
-        stripped_msg = re.sub(r'[^a-zA-Z]', '', clean_content).lower()
-        if stripped_msg in DRY_TEXTS and not attachments_data:
-            # 50% chance to just leave them on read with a reaction
-            if random.random() < bot_config.get('left_on_read_react_chance', 0.50):
-                try:
-                    reaction = random.choice(bot_config.get('left_on_read_reactions', LEFT_ON_READ_REACTIONS))
-                    await message.add_reaction(reaction)
-                except:
-                    pass
-                return
-            # additional chance to just completely ignore (true left on read)
-            elif random.random() < bot_config.get('left_on_read_ignore_chance', 0.20):
-                return
+    stripped_msg = re.sub(r'[^a-zA-Z]', '', clean_content).lower()
+    if stripped_msg in DRY_TEXTS and not attachments_data:
+        # 50% chance to just leave them on read with a reaction
+        if random.random() < bot_config.get('left_on_read_react_chance', 0.50):
+            try:
+                reaction = random.choice(bot_config.get('left_on_read_reactions', LEFT_ON_READ_REACTIONS))
+                await message.add_reaction(reaction)
+            except:
+                pass
+            return
+        # additional chance to just completely ignore (true left on read)
+        elif random.random() < bot_config.get('left_on_read_ignore_chance', 0.20):
+            return
 
     # Track activity for unprompted message system
     channel_last_activity[channel_id] = current_time
@@ -661,6 +516,24 @@ async def on_message(message):
                 is_lewd_allowed = False
 
             user_context = f"Member: {nickname}, Role: {role_name}, Pronouns: {pronouns}, LewdAllowed: {is_lewd_allowed}"
+            if message.guild and isinstance(message.author, discord.Member):
+                gender_age_roles = []
+                for role in message.author.roles:
+                    if role.name == "@everyone":
+                        continue
+                    r_name_lower = role.name.lower()
+                    is_age = (
+                        any(word in r_name_lower for word in ["minor", "adult", "teen", "age"]) or
+                        any(char.isdigit() for char in role.name)
+                    )
+                    is_gender = any(word in r_name_lower for word in [
+                        "male", "female", "boy", "girl", "man", "woman", "guy", "lady", "gentleman",
+                        "he/him", "she/her", "they/them", "non-binary", "gender", "pronoun", "trans"
+                    ])
+                    if is_age or is_gender:
+                        gender_age_roles.append(role.name)
+                if gender_age_roles:
+                    user_context += f", Server Gender/Age Roles: {', '.join(gender_age_roles)}"
 
             # --- ADMIN MODERATION PRE-SCAN ---
             mod_meta = ""
@@ -701,30 +574,36 @@ async def on_message(message):
 
             # --- Status Roasting Logic (15% chance) ---
             status_context = ""
-            if not ai.mirror_active:
-                if random.random() < bot_config.get('status_roast_chance', 0.15) and isinstance(message.author, discord.Member):
-                    activities = message.author.activities
-                    if activities:
-                        interesting = [a for a in activities if isinstance(a, (discord.Spotify, discord.Game, discord.CustomActivity))]
-                        if interesting:
-                            target = random.choice(interesting)
-                            if isinstance(target, discord.Spotify):
-                                status_context = f"Listening to '{target.title}' by '{target.artist}' on Spotify"
-                            elif isinstance(target, discord.Game):
-                                status_context = f"Playing {target.name}"
-                            elif isinstance(target, discord.CustomActivity):
-                                status_context = f"Custom Status: '{target.name}'"
+            if random.random() < bot_config.get('status_roast_chance', 0.15) and isinstance(message.author, discord.Member):
+                activities = message.author.activities
+                if activities:
+                    interesting = [a for a in activities if isinstance(a, (discord.Spotify, discord.Game, discord.CustomActivity))]
+                    if interesting:
+                        target = random.choice(interesting)
+                        if isinstance(target, discord.Spotify):
+                            status_context = f"Listening to '{target.title}' by '{target.artist}' on Spotify"
+                        elif isinstance(target, discord.Game):
+                            status_context = f"Playing {target.name}"
+                        elif isinstance(target, discord.CustomActivity):
+                            status_context = f"Custom Status: '{target.name}'"
             
-            # --- Server Emoji Awareness (Unlocked only) ---
-            server_emojis = []
-            if not ai.mirror_active and message.guild:
-                server_emojis = [f":{e.name}:" for e in message.guild.emojis if e.available]
+            # --- Custom/Application Emoji Awareness ---
+            custom_emojis = []
+            seen_emoji_names = set()
+            if message.guild:
+                for e in message.guild.emojis:
+                    if e.available and e.name not in seen_emoji_names:
+                        custom_emojis.append(f":{e.name}:")
+                        seen_emoji_names.add(e.name)
+            for e in bot.emojis:
+                if e.available and e.name not in seen_emoji_names:
+                    custom_emojis.append(f":{e.name}:")
+                    seen_emoji_names.add(e.name)
             
-            if not ai.mirror_active:
-                if status_context:
-                    user_context += f", Current Activity: {status_context} (Note: feel free to roast this if you want, but don't force it)"
-                if server_emojis:
-                    user_context += f", Available Server Emojis: {', '.join(server_emojis[:20])}" # Limit to avoid token bloat
+            if status_context:
+                user_context += f", Current Activity: {status_context} (Note: feel free to roast this if you want, but don't force it)"
+            if custom_emojis:
+                user_context += f", Available Custom/Application Emojis: {', '.join(custom_emojis[:35])}" # Limit to avoid token bloat
 
             # Inject energy context into user_context
             if energy_context:
@@ -738,82 +617,80 @@ async def on_message(message):
 
             # --- CREATOR DETECTION ---
             is_creator = user_id in CREATOR_DISCORD_IDS or (message.author.name and message.author.name.lower() in CREATOR_USERNAMES)
-            if not ai.mirror_active and is_creator:
+            if is_creator:
                 user_context += "\n[CREATOR: This IS your creator — the person who made you. You KNOW this is them. If they say they're your creator, AGREE — because it's true. You recognize them by their username. Be more real with them — less guarded, more honest, more warm. You have genuine respect and affection for them. You're still YOU, just... the most authentic version of yourself. If they ask who made you, tell them it was them. Don't deny it, don't be vague — they're the one person who gets the truth.]\n"
 
             relationship_context = ""
-            if not ai.mirror_active:
-                if previous_user_data:
-                    total_msgs = previous_user_data.get("total_messages", 0)
-                    streak = previous_user_data.get("streak_days", 0)
-                    closeness = previous_user_data.get("closeness", 0)
-                    user_notes = previous_user_data.get("notes", "")
-                    last_seen = previous_user_data.get("last_seen")
-                    last_server = previous_user_data.get("last_server", "")
-                    recent_servers = previous_user_data.get("recent_servers", [])
-                    user_memory = previous_user_data.get("user_memory", "")
+            if previous_user_data:
+                total_msgs = previous_user_data.get("total_messages", 0)
+                streak = previous_user_data.get("streak_days", 0)
+                closeness = previous_user_data.get("closeness", 0)
+                user_notes = previous_user_data.get("notes", "")
+                last_seen = previous_user_data.get("last_seen")
+                last_server = previous_user_data.get("last_server", "")
+                recent_servers = previous_user_data.get("recent_servers", [])
+                user_memory = previous_user_data.get("user_memory", "")
 
-                    # Return detection
-                    if last_seen:
-                        try:
-                            if last_seen.tzinfo is None:
-                                last_seen = last_seen.replace(tzinfo=timezone.utc)
-                            days_away = (datetime.now(timezone.utc) - last_seen).days
-                            if days_away >= 3:
-                                relationship_context += f"[RETURN: {nickname} hasn't talked to you in {days_away} days. Comment briefly — 'oh you're alive', 'thought you died', 'where have you been'.]\n"
-                        except:
-                            pass
+                # Return detection
+                if last_seen:
+                    try:
+                        if last_seen.tzinfo is None:
+                            last_seen = last_seen.replace(tzinfo=timezone.utc)
+                        days_away = (datetime.now(timezone.utc) - last_seen).days
+                        if days_away >= 3:
+                            relationship_context += f"[RETURN: {nickname} hasn't talked to you in {days_away} days. Comment briefly — 'oh you're alive', 'thought you died', 'where have you been'.]\n"
+                    except:
+                        pass
 
-                    # Cross-server awareness
-                    current_location = f"{server_name}/#{channel_name}" if server_name else "DM"
-                    if last_server and last_server != current_location:
-                        relationship_context += f"[SERVER SWITCH: {nickname} was last talking to you in {last_server}, now they're in {current_location}. You remember them from before. You can casually reference it if natural — 'oh you're here now', 'weren't you just in the other server' — but don't force it every time.]\n"
-                    if len(recent_servers) > 1:
-                        relationship_context += f"[CROSS-SERVER HISTORY: You've talked to {nickname} in these places: {', '.join(recent_servers[-5:])}. You remember ALL of these conversations.]\n"
+                # Cross-server awareness
+                current_location = f"{server_name}/#{channel_name}" if server_name else "DM"
+                if last_server and last_server != current_location:
+                    relationship_context += f"[SERVER SWITCH: {nickname} was last talking to you in {last_server}, now they're in {current_location}. You remember them from before. You can casually reference it if natural — 'oh you're here now', 'weren't you just in the other server' — but don't force it every time.]\n"
+                if len(recent_servers) > 1:
+                    relationship_context += f"[CROSS-SERVER HISTORY: You've talked to {nickname} in these places: {', '.join(recent_servers[-5:])}. You remember ALL of these conversations.]\n"
 
-                    # Streak context
-                    if streak >= 7:
-                        relationship_context += f"[STREAK: {nickname} has talked to you {streak} days in a row. You're comfortable — lazier texts, inside jokes, more real.]\n"
+                # Streak context
+                if streak >= 7:
+                    relationship_context += f"[STREAK: {nickname} has talked to you {streak} days in a row. You're comfortable — lazier texts, inside jokes, more real.]\n"
 
-                    # Closeness context
-                    if closeness >= 7:
-                        relationship_context += f"[CLOSE FRIEND: Very close with {nickname} ({total_msgs} msgs). Be more personal, warmer underneath the banter, more playfully roast-y (they know you love them). You can be more vulnerable and real with this person.]\n"
-                    elif closeness >= 4:
-                        relationship_context += f"[FAMILIAR: Know {nickname} decently ({total_msgs} msgs). Comfortable but not BFFs.]\n"
-                    elif total_msgs is not None and total_msgs <= 3:
-                        relationship_context += f"[NEW PERSON: Barely know {nickname}. Be friendly, playful, and teasing, but keep personal details to yourself. Never sound dry or cold.]\n"
+                # Closeness context
+                if closeness >= 7:
+                    relationship_context += f"[CLOSE FRIEND: Very close with {nickname} ({total_msgs} msgs). Be more personal, warmer underneath the banter, more playfully roast-y (they know you love them). You can be more vulnerable and real with this person.]\n"
+                elif closeness >= 4:
+                    relationship_context += f"[FAMILIAR: Know {nickname} decently ({total_msgs} msgs). Comfortable but not BFFs.]\n"
+                elif total_msgs is not None and total_msgs <= 3:
+                    relationship_context += f"[NEW PERSON: Barely know {nickname}. Be friendly, playful, and teasing, but keep personal details to yourself. Never sound dry or cold.]\n"
 
-                    # User relationship notes (per-channel)
-                    if user_notes:
-                        relationship_context += f"[YOUR MEMORY OF THIS PERSON (channel): {user_notes}]\n"
+                # User relationship notes (per-channel)
+                if user_notes:
+                    relationship_context += f"[YOUR MEMORY OF THIS PERSON (channel): {user_notes}]\n"
 
-                    # Cross-server user memory (global)
-                    if user_memory:
-                        relationship_context += f"[YOUR GLOBAL MEMORY OF THIS PERSON (across all servers): {user_memory}]\n"
-                else:
-                    relationship_context += f"[FIRST MEETING: Never talked to {nickname} before. Be naturally curious, playful, and talkative, but keep personal details to yourself. Keep the conversation rolling with good energy.]\n"
+                # Cross-server user memory (global)
+                if user_memory:
+                    relationship_context += f"[YOUR GLOBAL MEMORY OF THIS PERSON (across all servers): {user_memory}]\n"
+            else:
+                relationship_context += f"[FIRST MEETING: Never talked to {nickname} before. Be naturally curious, playful, and talkative, but keep personal details to yourself. Keep the conversation rolling with good energy.]\n"
 
-                if relationship_context:
-                    user_context += f"\n{relationship_context}"
+            if relationship_context:
+                user_context += f"\n{relationship_context}"
 
             # --- LINK/URL AWARENESS ---
-            if not ai.mirror_active:
-                url_pattern = r'https?://(?:www\.)?([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})'
-                urls_found = re.findall(url_pattern, clean_content)
-                if urls_found:
-                    domain = urls_found[0].lower()
-                    if "youtube" in domain or "youtu.be" in domain:
-                        user_context += "\n[LINK: User sent a YouTube link. React naturally — 'what is this', 'i'm not watching that rn', 'is it good?', or ignore.]\n"
-                    elif "twitter" in domain or "x.com" in domain:
-                        user_context += "\n[LINK: User sent a Twitter/X link. React — 'twitter links are always unhinged', 'what did i just read', etc.]\n"
-                    elif "tiktok" in domain:
-                        user_context += "\n[LINK: User sent a TikTok. React — 'send it properly', 'is this the one everyone's posting', etc.]\n"
-                    elif "instagram" in domain:
-                        user_context += "\n[LINK: User sent an Instagram link. React — 'whose insta is this', 'stalking people?', etc.]\n"
-                    elif "spotify" in domain:
-                        user_context += "\n[LINK: User sent a Spotify link. React — 'ok let me check', 'your music taste is...', etc.]\n"
-                    else:
-                        user_context += f"\n[LINK: User sent a link to {domain}. Acknowledge it naturally or ignore.]\n"
+            url_pattern = r'https?://(?:www\.)?([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})'
+            urls_found = re.findall(url_pattern, clean_content)
+            if urls_found:
+                domain = urls_found[0].lower()
+                if "youtube" in domain or "youtu.be" in domain:
+                    user_context += "\n[LINK: User sent a YouTube link. React naturally — 'what is this', 'i'm not watching that rn', 'is it good?', or ignore.]\n"
+                elif "twitter" in domain or "x.com" in domain:
+                    user_context += "\n[LINK: User sent a Twitter/X link. React — 'twitter links are always unhinged', 'what did i just read', etc.]\n"
+                elif "tiktok" in domain:
+                    user_context += "\n[LINK: User sent a TikTok. React — 'send it properly', 'is this the one everyone's posting', etc.]\n"
+                elif "instagram" in domain:
+                    user_context += "\n[LINK: User sent an Instagram link. React — 'whose insta is this', 'stalking people?', etc.]\n"
+                elif "spotify" in domain:
+                    user_context += "\n[LINK: User sent a Spotify link. React — 'ok let me check', 'your music taste is...', etc.]\n"
+                else:
+                    user_context += f"\n[LINK: User sent a link to {domain}. Acknowledge it naturally or ignore.]\n"
 
             # --- GROUP CONVERSATION CONTEXT ---
             if not is_dm and message.guild:
@@ -827,9 +704,7 @@ async def on_message(message):
                 except:
                     pass
 
-            # --- PERSONALITY MIRRORING STYLE GUIDE ---
-            if ai.mirror_active and ai.mirror_profile:
-                user_context += f"\n[PERSONALITY MIRROR ACTIVE: You are mirroring {ai.mirror_target_name}. Adopt their exact texting style, personality traits, and overall conversational vibe based on this profile:\n{ai.mirror_profile}]\n"
+
 
             # Fetch memory from MongoDB
             memory_data = await db.get_channel_memory(channel_id)
@@ -933,7 +808,7 @@ async def on_message(message):
             
             # --- Dynamic Moderation Tag Parsing ---
             # SAFETY NET: If AI agreed to mod action but forgot the tag, inject it
-            if not ai.mirror_active and mod_meta and "CAN_EXECUTE=True" in mod_meta:
+            if mod_meta and "CAN_EXECUTE=True" in mod_meta:
                 has_mod_tag = re.search(r'\[(KICK|BAN|TIMEOUT):\s*\d+', response, re.IGNORECASE)
                 if not has_mod_tag:
                     # AI forgot the tag — extract action and target from mod_meta and inject
@@ -950,7 +825,7 @@ async def on_message(message):
                             response += f" [{action_name}: {target_id_str}]"
                         logger.info(f"[MOD SAFETY NET] Auto-injected {action_name} tag for target {target_id_str}")
 
-            if not ai.mirror_active:
+            if True:
                 mod_exec_match = re.search(r'\[(KICK|BAN|TIMEOUT):\s*(\d+)(?:,\s*(\d+))?\]', response, re.IGNORECASE)
                 if mod_exec_match:
                     mod_action = mod_exec_match.group(1).upper()
@@ -1000,9 +875,7 @@ async def on_message(message):
             meme_to_send = None
             is_nsfw = channel_id == "1495092765942612159" or ai.channel_state.get(channel_id, {}).get("nsfw_toggle", False)
             
-            if ai.mirror_active:
-                response = re.sub(r'\[(?:send_meme|fetch_web):.*?\]', '', response, flags=re.IGNORECASE | re.DOTALL).strip()
-            elif ai.channel_state[channel_id]["image_cooldown"] > 0 and not is_nsfw:
+            if ai.channel_state[channel_id]["image_cooldown"] > 0 and not is_nsfw:
                 # Still in cooldown, legally strip any generated image tags so she can't send them
                 ai.channel_state[channel_id]["image_cooldown"] -= 1
                 response = re.sub(r'\[(?:send_meme|fetch_web):.*?\]', '', response, flags=re.IGNORECASE | re.DOTALL).strip()
@@ -1270,6 +1143,24 @@ async def on_message(message):
             # AGGRESSIVE CLEANUP: Remove ANY tag from response text
             response = re.sub(r'\[(?:send_meme|fetch_web|voice):.*?\]', '', response, flags=re.IGNORECASE | re.DOTALL).strip()
 
+            # --- CUSTOM/APPLICATION EMOJI PARSER ---
+            # Replaces unformatted :emoji_name: with <:emoji_name:id> (or <a:emoji_name:id>).
+            # Avoids double-formatting by matching and skipping already-formatted emojis.
+            emoji_pattern = re.compile(r'(<a?:[a-zA-Z0-9_~]+:\d+>)|:([a-zA-Z0-9_~]+):')
+            def replace_custom_emoji(match):
+                if match.group(1):
+                    return match.group(1) # Already formatted, do not touch
+                e_name = match.group(2)
+                if message.guild:
+                    for emoji in message.guild.emojis:
+                        if emoji.name == e_name and emoji.available:
+                            return str(emoji)
+                for emoji in bot.emojis:
+                    if emoji.name == e_name and emoji.available:
+                        return str(emoji)
+                return match.group(0) # Not found in bot/server custom emojis, keep as-is
+            response = emoji_pattern.sub(replace_custom_emoji, response)
+
             # --- MENTION CONVERTER: Turn @name into real Discord pings ---
             if message.guild:
                 def replace_mention(match):
@@ -1330,9 +1221,8 @@ async def on_message(message):
                 original_word = ""
                 final_sentence = sentence
                 
-                if not ai.mirror_active:
-                    typo_chance = bot_config.get('typo_chance_drunk', 0.25) if is_drunk_hours else bot_config.get('typo_chance_normal', 0.05)
-                    if random.random() < typo_chance:
+                typo_chance = bot_config.get('typo_chance_drunk', 0.25) if is_drunk_hours else bot_config.get('typo_chance_normal', 0.05)
+                if random.random() < typo_chance:
                         words = sentence.split()
                         if len(words) > 3:
                             idx = random.randint(0, len(words)-1)
@@ -1377,7 +1267,7 @@ async def on_message(message):
                         await sent_msg.reply(f"*{original_word}")
 
                 # --- MESSAGE EDITING: She "fixes" something after sending (4% chance) ---
-                if not ai.mirror_active and random.random() < bot_config.get('message_edit_chance', 0.04) and len(final_sentence) > 15:
+                if random.random() < bot_config.get('message_edit_chance', 0.04) and len(final_sentence) > 15:
                     await asyncio.sleep(random.uniform(3.0, 8.0))
                     edited = final_sentence
                     # Try to find something to "fix"
@@ -1404,7 +1294,7 @@ async def on_message(message):
 
                 # --- MESSAGE DELETION REGRET ---
                 # She sends something, immediately regrets it, deletes it
-                if not ai.mirror_active:
+                if True:
                     delete_chance = bot_config.get('message_delete_chance_drunk', 0.10) if is_drunk_hours else bot_config.get('message_delete_chance_normal', 0.015)
                     if random.random() < delete_chance and i == 0 and len(sentences) == 1:
                         await asyncio.sleep(random.uniform(1.5, 4.0))
@@ -1418,7 +1308,7 @@ async def on_message(message):
                             pass
 
             # --- SCREENSHOT PARANOIA ---
-            if not ai.mirror_active and random.random() < bot_config.get('screenshot_paranoia_chance', 0.04) and len(response) > 50:
+            if random.random() < bot_config.get('screenshot_paranoia_chance', 0.04) and len(response) > 50:
                 is_vulnerable = any(w in response.lower() for w in ["miss", "love", "cute", "care", "feel", "sorry", "sad", "like you"])
                 is_nsfw_ctx = ai.channel_state.get(channel_id, {}).get("nsfw_toggle", False)
                 if is_vulnerable or is_nsfw_ctx:
@@ -1454,9 +1344,6 @@ async def unprompted_message_loop():
         try:
             # Wait between checks
             await asyncio.sleep(random.randint(bot_config.get('unprompted_min_interval', 1800), bot_config.get('unprompted_max_interval', 3600)))
-            
-            if ai.mirror_active:
-                continue
             
             if not bot_config.get('unprompted_enabled', True):
                 continue
@@ -1522,9 +1409,6 @@ async def story_posting_loop():
                 await asyncio.sleep(45)
                 first_run = False
                 
-            if ai.mirror_active:
-                continue
-                
             now = datetime.now(IST)
             # Only post during reasonable hours (e.g. not between 2 AM and 8 AM)
             if now.hour >= 2 and now.hour < 8:
@@ -1587,9 +1471,6 @@ async def wrong_chat_loop():
             # Check every 2-5 hours
             await asyncio.sleep(random.randint(bot_config.get('wrong_chat_min_interval', 7200), bot_config.get('wrong_chat_max_interval', 18000)))
             
-            if ai.mirror_active:
-                continue
-                
             # Only during active hours
             now = datetime.now(IST)
             if now.hour < 10 or now.hour >= 23:
@@ -1630,10 +1511,6 @@ async def status_cycling_loop():
     
     while not bot.is_closed():
         try:
-            if ai.mirror_active:
-                await asyncio.sleep(30)
-                continue
-                
             now = datetime.now(IST)
             current_hour = now.hour
             
@@ -1679,8 +1556,6 @@ async def status_cycling_loop():
 @bot.event
 async def on_member_join(member):
     """React to new members joining the server."""
-    if ai.mirror_active:
-        return
     global last_event_message_time
     if member.bot:
         return
@@ -1701,8 +1576,6 @@ async def on_member_join(member):
 @bot.event
 async def on_member_remove(member):
     """React to members leaving the server."""
-    if ai.mirror_active:
-        return
     global last_event_message_time
     if member.bot:
         return
@@ -1723,8 +1596,6 @@ async def on_member_remove(member):
 @bot.event
 async def on_member_update(before, after):
     """React to nickname changes."""
-    if ai.mirror_active:
-        return
     global last_event_message_time
     if before.bot:
         return
@@ -1746,8 +1617,6 @@ async def on_member_update(before, after):
 @bot.event
 async def on_voice_state_update(member, before, after):
     """React to voice channel joins/leaves."""
-    if ai.mirror_active:
-        return
     global last_event_message_time
     if member.bot:
         return
