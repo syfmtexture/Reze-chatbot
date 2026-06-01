@@ -35,7 +35,8 @@ config = {
     "message_delete_chance_normal": 0.015,
     "message_delete_chance_drunk": 0.10,
     "screenshot_paranoia_chance": 0.04,
-    "eavesdrop_chance": 0.05,
+    "eavesdrop_enabled": True,
+    "eavesdrop_chance": 0.005,
     "status_roast_chance": 0.15,
 
     # --- Background Tasks ---

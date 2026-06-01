@@ -319,6 +319,7 @@ def get_tasks():
         "wrong_chat": bot_config.get("wrong_chat_enabled"),
         "story": bot_config.get("story_enabled"),
         "status_cycling": bot_config.get("status_cycling_enabled"),
+        "eavesdrop": bot_config.get("eavesdrop_enabled"),
     })
 
 
@@ -332,6 +333,7 @@ def toggle_tasks():
         "wrong_chat": "wrong_chat_enabled",
         "story": "story_enabled",
         "status_cycling": "status_cycling_enabled",
+        "eavesdrop": "eavesdrop_enabled",
     }
     for key, config_key in mapping.items():
         if key in data:

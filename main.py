@@ -366,7 +366,7 @@ async def on_message(message):
         will_eavesdrop = False
         
         if not (is_mentioned or is_reply_to_bot):
-            if message.channel.id == target_ch_id:
+            if bot_config.get('eavesdrop_enabled', True) and message.channel.id == target_ch_id:
                 msg_lower = message.content.lower()
                 if "reze" in msg_lower:
                     now = time.time()
@@ -411,7 +411,7 @@ async def on_message(message):
                             # Too fast, ignore but don't grudge unless it hits 3
                             return
                         will_eavesdrop = True
-                elif random.random() < 0.02:  # Reduced from 5% to 2% random chance
+                elif random.random() < bot_config.get('eavesdrop_chance', 0.005):
                     will_eavesdrop = True
                     
             if not will_eavesdrop:
