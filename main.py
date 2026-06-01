@@ -47,33 +47,34 @@ tree = discord.app_commands.CommandTree(bot)
 # Initialize AI Handler
 ai = AIHandler()
 
-# Hardcoded defaults (your original server)
-DEFAULT_HINGLISH_ROLE_ID = 1263157325653479477
-DEFAULT_MALE_ROLE_ID = 916228722678456320
-DEFAULT_FEMALE_ROLE_ID = 916228772762619974
-DEFAULT_LEWD_ROLE_ID = 916228546664464396
-DEFAULT_TARGET_CHANNEL_ID = 1492604782874067075
-DEFAULT_STORY_CHANNEL_ID = 1346667584669487224
-DEFAULT_NSFW_CHANNEL_ID = "1495092765942612159"
+# Hardcoded defaults (Nullified/Cleaned for multi-server support)
+DEFAULT_HINGLISH_ROLE_ID = 0
+DEFAULT_MALE_ROLE_ID = 0
+DEFAULT_FEMALE_ROLE_ID = 0
+DEFAULT_LEWD_ROLE_ID = 0
+DEFAULT_TARGET_CHANNEL_ID = 0
+DEFAULT_STORY_CHANNEL_ID = 0
+DEFAULT_NSFW_CHANNEL_ID = 0
 
 # In-memory cache for server configs (guild_id -> config dict)
 _server_config_cache = {}
 
 async def get_guild_config(guild_id: int) -> dict:
-    """Get server config with in-memory cache. Falls back to hardcoded defaults."""
+    """Get server config with in-memory cache. Falls back to empty dict."""
     gid = str(guild_id)
     if gid not in _server_config_cache:
         _server_config_cache[gid] = await db.get_server_config(gid)
-    return _server_config_cache[gid]
+    return _server_config_cache[gid] or {}
 
 def get_role_id(config: dict, key: str, default: int) -> int:
-    """Get a role ID from server config, falling back to hardcoded default."""
-    return config.get(key, default)
+    """Get a role ID from server config, falling back to default/0."""
+    val = config.get(key, default)
+    return int(val) if val else 0
 
 def get_channel_id(config: dict, key: str, default) -> int:
-    """Get a channel ID from server config, falling back to hardcoded default."""
+    """Get a channel ID from server config, falling back to default/0."""
     val = config.get(key, default)
-    return int(val) if val else int(default)
+    return int(val) if val else 0
 
 
 def translate_tags(query: str, is_booru: bool) -> str:
@@ -115,6 +116,7 @@ EVENT_COOLDOWN_SECONDS = 300  # 5 minutes between any event-driven messages
 @tree.command(name="setup", description="Show current server config for Reze")
 @discord.app_commands.default_permissions(administrator=True)
 async def slash_setup(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
     config = await get_guild_config(interaction.guild_id)
     embed = discord.Embed(title="Reze Server Config", color=0x9B59B6)
     embed.add_field(name="Male Role", value=f"<@&{config['male_role_id']}>" if config.get('male_role_id') else "Not set (using default)", inline=True)
@@ -124,7 +126,7 @@ async def slash_setup(interaction: discord.Interaction):
     embed.add_field(name="Target Channel", value=f"<#{config['target_channel_id']}>" if config.get('target_channel_id') else "Not set (using default)", inline=True)
     embed.add_field(name="NSFW Channel", value=f"<#{config['nsfw_channel_id']}>" if config.get('nsfw_channel_id') else "Not set (using default)", inline=True)
     embed.set_footer(text="Use /setrole and /setchannel to configure")
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
 @tree.command(name="setrole", description="Set a role for Reze to recognize in this server")
 @discord.app_commands.default_permissions(administrator=True)
@@ -139,10 +141,11 @@ async def slash_setup(interaction: discord.Interaction):
     discord.app_commands.Choice(name="Lewd Allowed", value="lewd_role_id"),
 ])
 async def slash_setrole(interaction: discord.Interaction, role_type: discord.app_commands.Choice[str], role: discord.Role):
+    await interaction.response.defer(ephemeral=True)
     gid = str(interaction.guild_id)
     await db.set_server_config(gid, role_type.value, role.id)
     _server_config_cache.pop(gid, None)  # Invalidate cache
-    await interaction.response.send_message(f"done. **{role_type.name}** role set to {role.mention}", ephemeral=True)
+    await interaction.followup.send(f"done. **{role_type.name}** role set to {role.mention}", ephemeral=True)
 
 @tree.command(name="setchannel", description="Set a channel for Reze in this server")
 @discord.app_commands.default_permissions(administrator=True)
@@ -156,18 +159,20 @@ async def slash_setrole(interaction: discord.Interaction, role_type: discord.app
     discord.app_commands.Choice(name="Story", value="story_channel_id"),
 ])
 async def slash_setchannel(interaction: discord.Interaction, channel_type: discord.app_commands.Choice[str], channel: discord.TextChannel):
+    await interaction.response.defer(ephemeral=True)
     gid = str(interaction.guild_id)
     await db.set_server_config(gid, channel_type.value, channel.id)
     _server_config_cache.pop(gid, None)  # Invalidate cache
-    await interaction.response.send_message(f"done. **{channel_type.name}** channel set to {channel.mention}", ephemeral=True)
+    await interaction.followup.send(f"done. **{channel_type.name}** channel set to {channel.mention}", ephemeral=True)
 
 @tree.command(name="resetconfig", description="Reset all Reze config for this server to defaults")
 @discord.app_commands.default_permissions(administrator=True)
 async def slash_resetconfig(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
     gid = str(interaction.guild_id)
     await db.server_configs_col.delete_one({"_id": gid})
     _server_config_cache.pop(gid, None)
-    await interaction.response.send_message("config reset to defaults.", ephemeral=True)
+    await interaction.followup.send("config reset to defaults.", ephemeral=True)
 
 # --- NEW: Rate Limiting & Fallbacks ---
 user_msg_timestamps = {}
@@ -193,6 +198,13 @@ channel_locks = {}
 
 # Track last message time per channel (for unprompted messages)
 channel_last_activity = {}
+
+# Per-user eavesdrop history to track spamming of "reze"
+# user_id -> list of timestamps when they mentioned "reze"
+reze_mention_history = {}
+
+# Track application-scoped emojis fetched at startup
+application_emojis = []
 
 # Track channels currently undergoing memory compression to prevent concurrent API storms
 active_compressions = set()
@@ -267,10 +279,27 @@ async def on_ready():
     print(f"Logged in as {bot.user.name} (ID: {bot.user.id})")
     print("Bot is ready. Mention me or reply to my message to chat.")
     print("------")
+    
+    # Fetch application emojis dynamically
+    global application_emojis
+    try:
+        application_emojis = await bot.fetch_application_emojis()
+        print(f"Loaded {len(application_emojis)} application emojis.")
+    except Exception as e:
+        print(f"Failed to fetch application emojis: {e}")
+        application_emojis = []
+
     # Sync slash commands
     try:
-        synced = await tree.sync()
-        print(f"Synced {len(synced)} slash commands.")
+        guild_id = os.getenv("GUILD_ID")
+        if guild_id:
+            guild = discord.Object(id=int(guild_id))
+            tree.copy_global_to(guild=guild)
+            synced = await tree.sync(guild=guild)
+            print(f"Synced {len(synced)} slash commands to guild {guild_id} instantly (ASAP).")
+        else:
+            synced = await tree.sync()
+            print(f"Synced {len(synced)} slash commands globally.")
     except Exception as e:
         print(f"Failed to sync slash commands: {e}")
     # Initialize dashboard with bot references
@@ -340,8 +369,49 @@ async def on_message(message):
             if message.channel.id == target_ch_id:
                 msg_lower = message.content.lower()
                 if "reze" in msg_lower:
-                    will_eavesdrop = True
-                elif random.random() < 0.05: # 5% random chance
+                    now = time.time()
+                    uid = message.author.id
+                    if uid not in reze_mention_history:
+                        reze_mention_history[uid] = []
+                    
+                    # Keep timestamps within the last 10 seconds
+                    reze_mention_history[uid] = [t for t in reze_mention_history[uid] if now - t < 10]
+                    reze_mention_history[uid].append(now)
+                    
+                    recent_mentions = len(reze_mention_history[uid])
+                    if recent_mentions >= 3:
+                        # User is spamming "reze"! Respond in character with annoyance and trigger a grudge
+                        annoyed_responses = [
+                            "abey stop spamming my name, i can hear you 🙄",
+                            "reze reze reze... kya hai? first time sun rhe ho kya mera naam?",
+                            "kya reze reze laga rakha hai, chup raho thodi der 🤫",
+                            "ha sunayi de rha h. stop spamming or i'll literally ignore you.",
+                            "kitna yapping krte ho yaar, stop saying my name continuously"
+                        ]
+                        # Put them on grudge immediately
+                        grudge_duration = random.randint(bot_config.get('grudge_duration_min', 120), bot_config.get('grudge_duration_max', 300))
+                        grudge_list[uid] = now + grudge_duration
+                        
+                        try:
+                            await message.add_reaction("🙄")
+                        except:
+                            pass
+                            
+                        await message.reply(random.choice(annoyed_responses))
+                        return
+                    else:
+                        # 1st or 2nd mention - respond normally
+                        # To prevent flooding the channel if multiple users trigger, we still keep a short 10s cooldown for successful eavesdrops
+                        # but we only count it if they aren't spamming.
+                        # Let's check if the last successful eavesdrop was too recent
+                        last_trigger_time = 0
+                        if len(reze_mention_history[uid]) > 1:
+                            last_trigger_time = reze_mention_history[uid][-2]
+                        if now - last_trigger_time < 10:
+                            # Too fast, ignore but don't grudge unless it hits 3
+                            return
+                        will_eavesdrop = True
+                elif random.random() < 0.02:  # Reduced from 5% to 2% random chance
                     will_eavesdrop = True
                     
             if not will_eavesdrop:
@@ -501,19 +571,46 @@ async def on_message(message):
                 lewd_rid = get_role_id(g_cfg, 'lewd_role_id', DEFAULT_LEWD_ROLE_ID)
 
                 # Check for Hinglish role
-                is_hinglish_user = any(role.id == hinglish_rid for role in message.author.roles)
+                is_hinglish_user = any(role.id == hinglish_rid for role in message.author.roles) if hinglish_rid else False
                 
                 # Check for Gender roles
-                if any(role.id == male_rid for role in message.author.roles):
+                has_gender_role = False
+                if male_rid and any(role.id == male_rid for role in message.author.roles):
                     role_name = "male"
                     pronouns = "he/him"
-                elif any(role.id == female_rid for role in message.author.roles):
+                    has_gender_role = True
+                elif female_rid and any(role.id == female_rid for role in message.author.roles):
                     role_name = "female"
                     pronouns = "she/her"
+                    has_gender_role = True
+                
+                # Fallback: scan role names if configured roles aren't present/matched
+                if not has_gender_role:
+                    for role in message.author.roles:
+                        r_name_lower = role.name.lower()
+                        # Boy keywords
+                        if any(w in r_name_lower for w in ["boy", "male", "guy", "man", "he/him"]):
+                            role_name = "male"
+                            pronouns = "he/him"
+                            break
+                        # Girl keywords
+                        elif any(w in r_name_lower for w in ["girl", "gurl", "female", "woman", "she/her"]):
+                            role_name = "female"
+                            pronouns = "she/her"
+                            break
                     
-                is_lewd_allowed = any(role.id == lewd_rid for role in message.author.roles)
+                is_lewd_allowed = any(role.id == lewd_rid for role in message.author.roles) if lewd_rid else False
             else:
                 is_lewd_allowed = False
+
+            # Determine if this is an NSFW context (NSFW channel or toggle active)
+            is_nsfw = False
+            if message.guild:
+                g_cfg = await get_guild_config(message.guild.id)
+                nsfw_ch_id = get_channel_id(g_cfg, 'nsfw_channel_id', DEFAULT_NSFW_CHANNEL_ID)
+                is_nsfw = (message.channel.id == nsfw_ch_id) or ai.channel_state.get(channel_id, {}).get("nsfw_toggle", False)
+            else:
+                is_nsfw = ai.channel_state.get(channel_id, {}).get("nsfw_toggle", False)
 
             user_context = f"Member: {nickname}, Role: {role_name}, Pronouns: {pronouns}, LewdAllowed: {is_lewd_allowed}"
             if message.guild and isinstance(message.author, discord.Member):
@@ -597,6 +694,11 @@ async def on_message(message):
                         seen_emoji_names.add(e.name)
             for e in bot.emojis:
                 if e.available and e.name not in seen_emoji_names:
+                    custom_emojis.append(f":{e.name}:")
+                    seen_emoji_names.add(e.name)
+            # Add application-level emojis
+            for e in application_emojis:
+                if e.name not in seen_emoji_names:
                     custom_emojis.append(f":{e.name}:")
                     seen_emoji_names.add(e.name)
             
@@ -719,7 +821,8 @@ async def on_message(message):
                 is_hinglish=is_hinglish_user,
                 user_context=user_context,
                 channel_id=channel_id,
-                long_term_summary=long_term_summary
+                long_term_summary=long_term_summary,
+                is_nsfw=is_nsfw
             )
 
             # Update channel memory in MongoDB (annotate with image metadata)
@@ -873,7 +976,6 @@ async def on_message(message):
                 ai.channel_state[channel_id]["image_cooldown"] = 0
                 
             meme_to_send = None
-            is_nsfw = channel_id == "1495092765942612159" or ai.channel_state.get(channel_id, {}).get("nsfw_toggle", False)
             
             if ai.channel_state[channel_id]["image_cooldown"] > 0 and not is_nsfw:
                 # Still in cooldown, legally strip any generated image tags so she can't send them
@@ -1158,7 +1260,10 @@ async def on_message(message):
                 for emoji in bot.emojis:
                     if emoji.name == e_name and emoji.available:
                         return str(emoji)
-                return match.group(0) # Not found in bot/server custom emojis, keep as-is
+                for emoji in application_emojis:
+                    if emoji.name == e_name:
+                        return str(emoji)
+                return match.group(0) # Not found in bot/server/application emojis, keep as-is
             response = emoji_pattern.sub(replace_custom_emoji, response)
 
             # --- MENTION CONVERTER: Turn @name into real Discord pings ---
@@ -1335,9 +1440,8 @@ async def on_message(message):
 unprompted_waiting_for_reply = {}
 
 async def unprompted_message_loop():
-    """Every few minutes, check if a target channel has been dead. If so, Reze might text first."""
+    """Every few minutes, check target channels across all guilds to see if they've been dead. If so, Reze might text first."""
     await bot.wait_until_ready()
-    TARGET_CHANNEL_ID = 1492604782874067075  # The channel she hangs out in
     IST = timezone(timedelta(hours=5, minutes=30))
     
     while not bot.is_closed():
@@ -1353,40 +1457,47 @@ async def unprompted_message_loop():
             if now.hour < 8 or (now.hour >= 1 and now.hour < 6):
                 continue
                 
-            channel = bot.get_channel(TARGET_CHANNEL_ID)
-            if not channel:
-                continue
-            
-            channel_id = str(TARGET_CHANNEL_ID)
-            
-            # ANTI-FLOOD: If she already sent a bored message and nobody replied, DON'T send another
-            if unprompted_waiting_for_reply.get(channel_id, False):
-                continue
-            
-            # Global cooldown: don't send if a recent event message was sent
-            if time.time() - last_event_message_time < EVENT_COOLDOWN_SECONDS:
-                continue
-            
-            # Check if channel has been dead for at least 45 minutes
-            last_activity = channel_last_activity.get(channel_id, 0)
-            if time.time() - last_activity < 2700:  # Less than 45 min since last msg
-                continue
-            
-            # 25% chance to actually send something
-            if random.random() > bot_config.get('unprompted_chance', 0.25):
-                continue
+            # Loop through all guilds the bot is currently in
+            for guild in bot.guilds:
+                g_cfg = await get_guild_config(guild.id)
+                target_ch_id = get_channel_id(g_cfg, 'target_channel_id', DEFAULT_TARGET_CHANNEL_ID)
+                if not target_ch_id:
+                    continue
+                    
+                channel = bot.get_channel(target_ch_id)
+                if not channel:
+                    continue
                 
-            # Generate an unprompted message
-            msg = await ai.generate_unprompted_message(channel_id)
-            if msg:
-                async with channel.typing():
-                    await asyncio.sleep(random.uniform(1.5, 3.0))
-                await channel.send(msg)
-                # Mark that she's waiting for a reply — she won't text again until someone responds
-                unprompted_waiting_for_reply[channel_id] = True
-                last_event_message_time = time.time()
-                print(f"[UNPROMPTED] Reze sent a bored message in #{channel.name} (waiting for reply)")
+                channel_id = str(target_ch_id)
                 
+                # ANTI-FLOOD: If she already sent a bored message and nobody replied, DON'T send another
+                if unprompted_waiting_for_reply.get(channel_id, False):
+                    continue
+                
+                # Global cooldown: don't send if a recent event message was sent
+                if time.time() - last_event_message_time < EVENT_COOLDOWN_SECONDS:
+                    continue
+                
+                # Check if channel has been dead for at least 45 minutes
+                last_activity = channel_last_activity.get(channel_id, 0)
+                if time.time() - last_activity < 2700:  # Less than 45 min since last msg
+                    continue
+                
+                # 25% chance to actually send something
+                if random.random() > bot_config.get('unprompted_chance', 0.25):
+                    continue
+                    
+                # Generate an unprompted message
+                msg = await ai.generate_unprompted_message(channel_id)
+                if msg:
+                    async with channel.typing():
+                        await asyncio.sleep(random.uniform(1.5, 3.0))
+                    await channel.send(msg)
+                    # Mark that she's waiting for a reply — she won't text again until someone responds
+                    unprompted_waiting_for_reply[channel_id] = True
+                    last_event_message_time = time.time()
+                    print(f"[UNPROMPTED] Reze sent a bored message in #{channel.name} ({guild.name}) (waiting for reply)")
+                    
         except Exception as e:
             logger.error(f"Unprompted message loop error: {e}")
             await asyncio.sleep(60)
@@ -1395,7 +1506,6 @@ async def unprompted_message_loop():
 async def story_posting_loop():
     """Posts an Instagram-style story (image + short caption) once a day."""
     await bot.wait_until_ready()
-    STORY_CHANNEL_ID = 1346667584669487224
     IST = timezone(timedelta(hours=5, minutes=30))
     first_run = True
     
@@ -1414,46 +1524,52 @@ async def story_posting_loop():
             if now.hour >= 2 and now.hour < 8:
                 continue
 
-            channel = bot.get_channel(STORY_CHANNEL_ID)
-            if not channel:
-                continue
+            for guild in bot.guilds:
+                g_cfg = await get_guild_config(guild.id)
+                story_ch_id = get_channel_id(g_cfg, 'story_channel_id', DEFAULT_STORY_CHANNEL_ID)
+                if not story_ch_id:
+                    continue
 
-            response = await ai.generate_story()
-            if not response:
-                continue
-                
-            meme_to_send = None
-            web_meme_match = re.search(r'\[fetch_web:\s*(.*?)\]', response, re.IGNORECASE | re.DOTALL)
-            if web_meme_match:
-                query = web_meme_match.group(1).strip()
-                clean_query = query.lower().replace("reze", "").strip()
-                
-                timeout = aiohttp.ClientTimeout(total=10)
-                async with aiohttp.ClientSession(timeout=timeout) as session:
-                    headers = {'User-agent': 'RezeBot/1.0'}
-                    safe_query = urllib.parse.quote(f"reze_(chainsaw_man) {clean_query}")
-                    url = f"https://gelbooru.com/index.php?page=dapi&s=post&q=index&json=1&tags={safe_query}+rating:general&limit=50"
+                channel = bot.get_channel(story_ch_id)
+                if not channel:
+                    continue
+
+                response = await ai.generate_story()
+                if not response:
+                    continue
                     
-                    async with session.get(url, headers=headers) as resp:
-                        if resp.status == 200:
-                            data = await resp.json()
-                            if "post" in data:
-                                images = [p['file_url'] for p in data['post'] if "file_url" in p]
-                                if images:
-                                    img_url = random.choice(images)
-                                    async with session.get(img_url) as img_resp:
-                                        if img_resp.status == 200:
-                                            img_data = await img_resp.read()
-                                            file_ext = img_url.split('?')[0].split('.')[-1]
-                                            meme_to_send = discord.File(io.BytesIO(img_data), f"story.{file_ext}")
+                meme_to_send = None
+                web_meme_match = re.search(r'\[fetch_web:\s*(.*?)\]', response, re.IGNORECASE | re.DOTALL)
+                if web_meme_match:
+                    query = web_meme_match.group(1).strip()
+                    clean_query = query.lower().replace("reze", "").strip()
+                    
+                    timeout = aiohttp.ClientTimeout(total=10)
+                    async with aiohttp.ClientSession(timeout=timeout) as session:
+                        headers = {'User-agent': 'RezeBot/1.0'}
+                        safe_query = urllib.parse.quote(f"reze_(chainsaw_man) {clean_query}")
+                        url = f"https://gelbooru.com/index.php?page=dapi&s=post&q=index&json=1&tags={safe_query}+rating:general&limit=50"
+                        
+                        async with session.get(url, headers=headers) as resp:
+                            if resp.status == 200:
+                                data = await resp.json()
+                                if "post" in data:
+                                    images = [p['file_url'] for p in data['post'] if "file_url" in p]
+                                    if images:
+                                        img_url = random.choice(images)
+                                        async with session.get(img_url) as img_resp:
+                                            if img_resp.status == 200:
+                                                img_data = await img_resp.read()
+                                                file_ext = img_url.split('?')[0].split('.')[-1]
+                                                meme_to_send = discord.File(io.BytesIO(img_data), f"story.{file_ext}")
 
-            caption = re.sub(r'\[fetch_web:.*?\]', '', response, flags=re.IGNORECASE).strip()
-            
-            if meme_to_send:
-                async with channel.typing():
-                    await asyncio.sleep(3)
-                await channel.send(caption, file=meme_to_send)
-                print(f"[STORY] Reze posted a story to #{channel.name}")
+                caption = re.sub(r'\[fetch_web:.*?\]', '', response, flags=re.IGNORECASE).strip()
+                
+                if meme_to_send:
+                    async with channel.typing():
+                        await asyncio.sleep(3)
+                    await channel.send(caption, file=meme_to_send)
+                    print(f"[STORY] Reze posted a story to #{channel.name} ({guild.name})")
 
         except Exception as e:
             logger.error(f"Story posting loop error: {e}")
@@ -1463,7 +1579,6 @@ async def story_posting_loop():
 async def wrong_chat_loop():
     """Very rarely, Reze sends a message to the wrong chat, deletes it, and says 'mb wrong chat'."""
     await bot.wait_until_ready()
-    TARGET_CHANNEL_ID = 1492604782874067075
     IST = timezone(timedelta(hours=5, minutes=30))
     
     while not bot.is_closed():
@@ -1480,23 +1595,29 @@ async def wrong_chat_loop():
             if not bot_config.get('wrong_chat_enabled', True) or random.random() > bot_config.get('wrong_chat_chance', 0.15):
                 continue
                 
-            channel = bot.get_channel(TARGET_CHANNEL_ID)
-            if not channel:
-                continue
-            
-            # Send the "wrong" message
-            wrong_msg = random.choice(WRONG_CHAT_MESSAGES)
-            sent = await channel.send(wrong_msg)
-            
-            # Wait 2-5 seconds, then delete it
-            await asyncio.sleep(random.uniform(2.0, 5.0))
-            await sent.delete()
-            
-            # Then send the correction
-            await asyncio.sleep(random.uniform(0.5, 1.5))
-            corrections = ["mb wrong chat", "wrong chat lol", "oops wrong chat", "ignore that", "that wasn't for here 💀"]
-            await channel.send(random.choice(corrections))
-            print(f"[WRONG CHAT] Reze sent a wrong-chat message in #{channel.name}")
+            for guild in bot.guilds:
+                g_cfg = await get_guild_config(guild.id)
+                target_ch_id = get_channel_id(g_cfg, 'target_channel_id', DEFAULT_TARGET_CHANNEL_ID)
+                if not target_ch_id:
+                    continue
+
+                channel = bot.get_channel(target_ch_id)
+                if not channel:
+                    continue
+                
+                # Send the "wrong" message
+                wrong_msg = random.choice(WRONG_CHAT_MESSAGES)
+                sent = await channel.send(wrong_msg)
+                
+                # Wait 2-5 seconds, then delete it
+                await asyncio.sleep(random.uniform(2.0, 5.0))
+                await sent.delete()
+                
+                # Then send the correction
+                await asyncio.sleep(random.uniform(0.5, 1.5))
+                corrections = ["mb wrong chat", "wrong chat lol", "oops wrong chat", "ignore that", "that wasn't for here 💀"]
+                await channel.send(random.choice(corrections))
+                print(f"[WRONG CHAT] Reze sent a wrong-chat message in #{channel.name} ({guild.name})")
             
         except Exception as e:
             logger.error(f"Wrong chat loop error: {e}")

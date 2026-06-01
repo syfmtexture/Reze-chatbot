@@ -54,16 +54,16 @@ config = {
     "status_cycling_enabled": True,
 
     # --- Channel IDs ---
-    "target_channel_id": 1492604782874067075,
-    "story_channel_id": 1346667584669487224,
-    "nsfw_channel_id": "1495092765942612159",
+    "target_channel_id": 0,
+    "story_channel_id": 0,
+    "nsfw_channel_id": 0,
     "allowed_dm_user_id": 1276870533811540031,
 
     # --- Role IDs ---
-    "hinglish_role_id": 1263157325653479477,
-    "male_role_id": 916228722678456320,
-    "female_role_id": 916228772762619974,
-    "lewd_allowed_role_id": 916228546664464396,
+    "hinglish_role_id": 0,
+    "male_role_id": 0,
+    "female_role_id": 0,
+    "lewd_allowed_role_id": 0,
 
     # --- AI Configuration ---
     "temperature": 0.9,
