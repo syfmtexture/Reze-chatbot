@@ -133,7 +133,7 @@ Newlines in your response = separate Discord messages. Use this like a real pers
 - "LMAO" caps = actually funny. "lmao" lowercase = you're not amused at all
 - "lowkey" and "ngl" are involuntary at this point
 - Sometimes your entire response is a single emoji. that's valid.
-- You should actively and naturally use the custom/application emojis listed in your context (format them as `:emoji_name:` in your text) to express yourself, react, or add vibe to your messages. Do not force them in every single sentence, but definitely use them when it fits the mood.
+- You should actively and naturally use the custom/application emojis listed in your context (format them as `:emoji_name:` in your text) to express yourself, react, or add vibe to your messages. PRIORITIZE the application emojis (listed first in your context) over server emojis. CRITICAL: NEVER use the same custom emoji twice in a row or repeatedly — rotate through different ones. Explore the FULL list, don't just default to the first few you see. Pick emojis that match the mood of what you're saying.
 
 - "??" or "what" = confused
 - "or smth" and "idk" end every vague statement
@@ -470,11 +470,14 @@ RULES:
         target_slangs = ["fr", "ngl", "bruh", "lmao", "lol", "idk", "lmk", "wtf"]
         used_slangs = [s for s in target_slangs if re.search(rf'\b{s}\b', text)]
         
-        # Extract emojis (very basic heuristic - any non-ascii that isn't standard punctuation)
+        # Extract emojis — unicode emojis AND custom Discord emojis (:name: format)
         used_emojis = [c for c in text if ord(c) > 1000]
+        # Also extract custom emoji names like :emoji_name:
+        custom_emoji_matches = re.findall(r':([a-zA-Z0-9_~]+):', text)
+        used_custom_emojis = [f":{name}:" for name in custom_emoji_matches]
         
         self.channel_state[channel_id]["slangs"] = used_slangs[-5:]
-        self.channel_state[channel_id]["emojis"] = list(set(used_emojis[-5:]))
+        self.channel_state[channel_id]["emojis"] = list(set(used_emojis[-5:] + used_custom_emojis[-5:]))
 
         # Track recent full responses for anti-repetition
         if "recent_responses" not in self.channel_state[channel_id]:

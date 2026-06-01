@@ -360,61 +360,53 @@ async def on_message(message):
             message.reference.resolved.author == bot.user
         )
 
-        # Eavesdropping Logic — use per-server target channel
-        guild_config = await get_guild_config(message.guild.id) if message.guild else {}
-        target_ch_id = get_channel_id(guild_config, 'target_channel_id', DEFAULT_TARGET_CHANNEL_ID)
-        will_eavesdrop = False
+        # Name-trigger Logic — respond if someone says "reze" (even without pinging)
+        name_triggered = False
         
         if not (is_mentioned or is_reply_to_bot):
-            if bot_config.get('eavesdrop_enabled', True) and message.channel.id == target_ch_id:
-                msg_lower = message.content.lower()
-                if "reze" in msg_lower:
-                    now = time.time()
-                    uid = message.author.id
-                    if uid not in reze_mention_history:
-                        reze_mention_history[uid] = []
+            msg_lower = message.content.lower()
+            if "reze" in msg_lower:
+                now = time.time()
+                uid = message.author.id
+                if uid not in reze_mention_history:
+                    reze_mention_history[uid] = []
+                
+                # Keep timestamps within the last 10 seconds
+                reze_mention_history[uid] = [t for t in reze_mention_history[uid] if now - t < 10]
+                reze_mention_history[uid].append(now)
+                
+                recent_mentions = len(reze_mention_history[uid])
+                if recent_mentions >= 3:
+                    # User is spamming "reze"! Respond in character with annoyance and trigger a grudge
+                    annoyed_responses = [
+                        "abey stop spamming my name, i can hear you 🙄",
+                        "reze reze reze... kya hai? first time sun rhe ho kya mera naam?",
+                        "kya reze reze laga rakha hai, chup raho thodi der 🤫",
+                        "ha sunayi de rha h. stop spamming or i'll literally ignore you.",
+                        "kitna yapping krte ho yaar, stop saying my name continuously"
+                    ]
+                    # Put them on grudge immediately
+                    grudge_duration = random.randint(bot_config.get('grudge_duration_min', 120), bot_config.get('grudge_duration_max', 300))
+                    grudge_list[uid] = now + grudge_duration
                     
-                    # Keep timestamps within the last 10 seconds
-                    reze_mention_history[uid] = [t for t in reze_mention_history[uid] if now - t < 10]
-                    reze_mention_history[uid].append(now)
-                    
-                    recent_mentions = len(reze_mention_history[uid])
-                    if recent_mentions >= 3:
-                        # User is spamming "reze"! Respond in character with annoyance and trigger a grudge
-                        annoyed_responses = [
-                            "abey stop spamming my name, i can hear you 🙄",
-                            "reze reze reze... kya hai? first time sun rhe ho kya mera naam?",
-                            "kya reze reze laga rakha hai, chup raho thodi der 🤫",
-                            "ha sunayi de rha h. stop spamming or i'll literally ignore you.",
-                            "kitna yapping krte ho yaar, stop saying my name continuously"
-                        ]
-                        # Put them on grudge immediately
-                        grudge_duration = random.randint(bot_config.get('grudge_duration_min', 120), bot_config.get('grudge_duration_max', 300))
-                        grudge_list[uid] = now + grudge_duration
+                    try:
+                        await message.add_reaction("🙄")
+                    except:
+                        pass
                         
-                        try:
-                            await message.add_reaction("🙄")
-                        except:
-                            pass
-                            
-                        await message.reply(random.choice(annoyed_responses))
+                    await message.reply(random.choice(annoyed_responses))
+                    return
+                else:
+                    # 1st or 2nd mention - respond normally
+                    last_trigger_time = 0
+                    if len(reze_mention_history[uid]) > 1:
+                        last_trigger_time = reze_mention_history[uid][-2]
+                    if now - last_trigger_time < 10:
+                        # Too fast, ignore but don't grudge unless it hits 3
                         return
-                    else:
-                        # 1st or 2nd mention - respond normally
-                        # To prevent flooding the channel if multiple users trigger, we still keep a short 10s cooldown for successful eavesdrops
-                        # but we only count it if they aren't spamming.
-                        # Let's check if the last successful eavesdrop was too recent
-                        last_trigger_time = 0
-                        if len(reze_mention_history[uid]) > 1:
-                            last_trigger_time = reze_mention_history[uid][-2]
-                        if now - last_trigger_time < 10:
-                            # Too fast, ignore but don't grudge unless it hits 3
-                            return
-                        will_eavesdrop = True
-                elif random.random() < bot_config.get('eavesdrop_chance', 0.005):
-                    will_eavesdrop = True
+                    name_triggered = True
                     
-            if not will_eavesdrop:
+            if not name_triggered:
                 return
 
     # --- NEW: Rate Limiting Enforcement (Anti-Spam) ---
@@ -685,27 +677,36 @@ async def on_message(message):
                             status_context = f"Custom Status: '{target.name}'"
             
             # --- Custom/Application Emoji Awareness ---
-            custom_emojis = []
+            # Prioritize application emojis, then bot-level, then server emojis
+            app_emojis = []
+            other_emojis = []
             seen_emoji_names = set()
+            # 1. Application-level emojis (highest priority)
+            for e in application_emojis:
+                if e.name not in seen_emoji_names:
+                    app_emojis.append(f":{e.name}:")
+                    seen_emoji_names.add(e.name)
+            # 2. Bot-level emojis
+            for e in bot.emojis:
+                if e.available and e.name not in seen_emoji_names:
+                    other_emojis.append(f":{e.name}:")
+                    seen_emoji_names.add(e.name)
+            # 3. Server emojis (lowest priority)
             if message.guild:
                 for e in message.guild.emojis:
                     if e.available and e.name not in seen_emoji_names:
-                        custom_emojis.append(f":{e.name}:")
+                        other_emojis.append(f":{e.name}:")
                         seen_emoji_names.add(e.name)
-            for e in bot.emojis:
-                if e.available and e.name not in seen_emoji_names:
-                    custom_emojis.append(f":{e.name}:")
-                    seen_emoji_names.add(e.name)
-            # Add application-level emojis
-            for e in application_emojis:
-                if e.name not in seen_emoji_names:
-                    custom_emojis.append(f":{e.name}:")
-                    seen_emoji_names.add(e.name)
+            # Shuffle each group so the AI doesn't always gravitate to the first ones
+            random.shuffle(app_emojis)
+            random.shuffle(other_emojis)
+            # Combine: app emojis first so the AI sees them prominently
+            custom_emojis = app_emojis + other_emojis
             
             if status_context:
                 user_context += f", Current Activity: {status_context} (Note: feel free to roast this if you want, but don't force it)"
             if custom_emojis:
-                user_context += f", Available Custom/Application Emojis: {', '.join(custom_emojis[:35])}" # Limit to avoid token bloat
+                user_context += f", Available Custom Emojis (USE THESE — pick different ones each time, don't repeat the same emoji back-to-back, explore the full list): {', '.join(custom_emojis[:40])}"
 
             # Inject energy context into user_context
             if energy_context:
