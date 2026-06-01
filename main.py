@@ -114,7 +114,7 @@ EVENT_COOLDOWN_SECONDS = 300  # 5 minutes between any event-driven messages
 # ========================
 
 @tree.command(name="setup", description="Show current server config for Reze")
-@discord.app_commands.default_permissions(administrator=True)
+@discord.app_commands.default_permissions(manage_guild=True)
 async def slash_setup(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     config = await get_guild_config(interaction.guild_id)
@@ -129,7 +129,7 @@ async def slash_setup(interaction: discord.Interaction):
     await interaction.followup.send(embed=embed, ephemeral=True)
 
 @tree.command(name="setrole", description="Set a role for Reze to recognize in this server")
-@discord.app_commands.default_permissions(administrator=True)
+@discord.app_commands.default_permissions(manage_guild=True)
 @discord.app_commands.describe(
     role_type="Which role to set",
     role="The role to assign"
@@ -148,7 +148,7 @@ async def slash_setrole(interaction: discord.Interaction, role_type: discord.app
     await interaction.followup.send(f"done. **{role_type.name}** role set to {role.mention}", ephemeral=True)
 
 @tree.command(name="setchannel", description="Set a channel for Reze in this server")
-@discord.app_commands.default_permissions(administrator=True)
+@discord.app_commands.default_permissions(manage_guild=True)
 @discord.app_commands.describe(
     channel_type="Which channel to set",
     channel="The channel to assign"
@@ -166,7 +166,7 @@ async def slash_setchannel(interaction: discord.Interaction, channel_type: disco
     await interaction.followup.send(f"done. **{channel_type.name}** channel set to {channel.mention}", ephemeral=True)
 
 @tree.command(name="resetconfig", description="Reset all Reze config for this server to defaults")
-@discord.app_commands.default_permissions(administrator=True)
+@discord.app_commands.default_permissions(manage_guild=True)
 async def slash_resetconfig(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     gid = str(interaction.guild_id)
