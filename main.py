@@ -25,6 +25,7 @@ from datetime import timedelta, datetime, timezone
 from keep_alive import keep_alive
 import db
 import bot_config
+import games
 from PIL import Image
 
 # Load environment variables
@@ -125,6 +126,8 @@ async def slash_setup(interaction: discord.Interaction):
     embed.add_field(name="Lewd Role", value=f"<@&{config['lewd_role_id']}>" if config.get('lewd_role_id') else "Not set (using default)", inline=True)
     embed.add_field(name="Target Channel", value=f"<#{config['target_channel_id']}>" if config.get('target_channel_id') else "Not set (using default)", inline=True)
     embed.add_field(name="NSFW Channel", value=f"<#{config['nsfw_channel_id']}>" if config.get('nsfw_channel_id') else "Not set (using default)", inline=True)
+    embed.add_field(name="Story Channel", value=f"<#{config['story_channel_id']}>" if config.get('story_channel_id') else "Not set (using default)", inline=True)
+    embed.add_field(name="Confessions Channel", value=f"<#{config['confession_channel_id']}>" if config.get('confession_channel_id') else "Not set (auto-detects #confessions)", inline=True)
     embed.set_footer(text="Use /setrole and /setchannel to configure")
     await interaction.followup.send(embed=embed, ephemeral=True)
 
@@ -157,6 +160,7 @@ async def slash_setrole(interaction: discord.Interaction, role_type: discord.app
     discord.app_commands.Choice(name="Target (main hangout)", value="target_channel_id"),
     discord.app_commands.Choice(name="NSFW", value="nsfw_channel_id"),
     discord.app_commands.Choice(name="Story", value="story_channel_id"),
+    discord.app_commands.Choice(name="Confessions", value="confession_channel_id"),
 ])
 async def slash_setchannel(interaction: discord.Interaction, channel_type: discord.app_commands.Choice[str], channel: discord.TextChannel):
     await interaction.response.defer(ephemeral=True)
@@ -205,6 +209,626 @@ reze_mention_history = {}
 
 # Track application-scoped emojis fetched at startup
 application_emojis = []
+
+# AFK status tracker (user_id -> {"reason": reason, "time": timestamp, "name": display_name})
+afk_users = {}
+
+# User commands rate limit tracker (user_id -> list of command timestamps)
+user_command_timestamps = {}
+
+# Command-specific cooldown configurations (in seconds)
+COOLDOWN_TIMES = {
+    "confess": 300, # 5 minutes
+    "marry": 30,    # 30 seconds
+    "adopt": 30,    # 30 seconds
+    "divorce": 30,  # 30 seconds
+    "disown": 30,   # 30 seconds
+    "abandon": 30,  # 30 seconds
+    "runaway": 30,  # 30 seconds
+    "disownall": 30,# 30 seconds
+    "ship": 10,     # 10 seconds
+    "family": 15,   # 15 seconds
+    "rr": 10,
+    "blackjack": 10,
+    "bj": 10,
+    "rps": 10,
+    "trivia": 10,
+    "scramble": 15,
+    "ttt": 15,
+}
+
+# command_name -> user_id -> last_used_timestamp
+command_cooldown_timestamps = {}
+
+# --- ANIME ACTIONS & EMOTES (Nekos.best API) ---
+ACTIONS = [
+    "angry", "baka", "bite", "bleh", "blowkiss", "blush", "bonk", "bored", "carry",
+    "chase", "cheer", "clap", "confused", "cringe", "cry", "cuddle", "dance", "facepalm",
+    "feed", "handhold", "handshake", "happy", "highfive", "hug", "kick", "kiss",
+    "laugh", "lick", "lurk", "nod", "nom", "nope", "panic", "pat", "poke",
+    "pout", "punch", "run", "sad", "scream", "shrug", "slap", "sleep",
+    "smile", "smug", "stare", "surprised", "tailwhip", "think", "threaten", "thumbsup",
+    "tickle", "tired", "wave", "wink", "yawn", "yeet"
+]
+
+ACTION_VERBS = {
+    "angry": [
+        "gets angry at {target}! 💢",
+        "glares angrily at {target}... 😡",
+        "is super pissed at {target}! 😤"
+    ],
+    "baka": [
+        "calls {target} a baka! 🙄",
+        "points at {target} and yells \"BAKA!\" 🤪",
+        "shakes their head at {target}... baka behavior. 🤦‍♀️"
+    ],
+    "bite": [
+        "bites {target}! 👀",
+        "gives {target} a little nibble. 😈",
+        "chomps on {target}! 🦷"
+    ],
+    "bleh": [
+        "goes bleh at {target}! 😛",
+        "sticks their tongue out at {target}! 😜",
+        "pulls a face at {target}! 🤪"
+    ],
+    "blowkiss": [
+        "blows a kiss to {target}! 😘",
+        "sends a flying kiss {target}'s way! 💋",
+        "flirts and blows a kiss to {target}~ 💖"
+    ],
+    "blush": [
+        "blushes at {target}... 😳",
+        "turns red looking at {target}! 🙈",
+        "gets flustered by {target}. 💕"
+    ],
+    "bonk": [
+        "bonks {target}! 🔨",
+        "gives {target} a bonk on the head! 🏏",
+        "sends {target} to horny jail! 🚓"
+    ],
+    "bored": [
+        "gets bored of {target}... 🥱",
+        "sighs boredly at {target}. 💤",
+        "yawns while listening to {target}. 🙄"
+    ],
+    "carry": [
+        "carries {target}! 🎒",
+        "picks up {target} and carries them! 🏋️‍♀️",
+        "scoops {target} up in their arms! 💕"
+    ],
+    "chase": [
+        "chases {target}! 🏃",
+        "runs after {target} at full speed! 🏃‍♀️",
+        "is chasing {target} down! 🚓"
+    ],
+    "cheer": [
+        "cheers up {target}! 🎉",
+        "is rooting for {target}! 🙌",
+        "hypes {target} up! 📣"
+    ],
+    "clap": [
+        "claps for {target}! 👏",
+        "gives {target} a round of applause! 🎉",
+        "slow claps for {target}. 🙄"
+    ],
+    "confused": [
+        "looks confused at {target}... ❓",
+        "scratches their head looking at {target}. 🤔",
+        "has no idea what {target} is saying. 😵"
+    ],
+    "cringe": [
+        "cringes at {target}... 😬",
+        "physically cringes looking at {target}. 🤢",
+        "gives {target} the side-eye. 👀"
+    ],
+    "cry": [
+        "cries at {target}... 😭",
+        "sheds tears because of {target}. 🥺",
+        "cries on {target}'s shoulder. 😢"
+    ],
+    "cuddle": [
+        "cuddles with {target}! 🛌",
+        "snuggles up close to {target}. 💕",
+        "pulls {target} into a warm cuddle. 🧸"
+    ],
+    "dance": [
+        "dances with {target}! 💃",
+        "pulls {target} to the dance floor! 🕺",
+        "does a silly dance with {target}! ✨"
+    ],
+    "facepalm": [
+        "facepalms at {target}... *sigh* 🤦",
+        "slaps their forehead listening to {target}. 🤦‍♀️",
+        "can't believe {target} just said that. 💀"
+    ],
+    "feed": [
+        "feeds {target}! 🍰",
+        "opens wide and feeds {target}! 🥄",
+        "pops a sweet treat into {target}'s mouth! 🍬"
+    ],
+    "handhold": [
+        "holds hands with {target}! 💕",
+        "interlocks fingers with {target}. 😳",
+        "grabs {target}'s hand tightly! 🤝"
+    ],
+    "handshake": [
+        "shakes hands with {target}! 🤝",
+        "gives {target} a firm handshake. 💼",
+        "does a secret handshake with {target}! 🤜"
+    ],
+    "happy": [
+        "giggles happily at {target}! ✨",
+        "smiles brightly at {target}! 🥰",
+        "shares their happiness with {target}! 💕"
+    ],
+    "highfive": [
+        "high-fives {target}! ✋",
+        "slaps hands in a high-five with {target}! ⚡",
+        "gives {target} a high-five! 🎉"
+    ],
+    "hug": [
+        "hugs {target}! 💕",
+        "gives {target} a warm squeeze! 🧸",
+        "wraps {target} in a big hug! 🥰"
+    ],
+    "kick": [
+        "kicks {target}! 🦵",
+        "gives {target} a playful kick! ⚽",
+        "kicks {target} out of the way! 💀"
+    ],
+    "kiss": [
+        "kisses {target}! 💋",
+        "gives {target} a sweet peck! 😘",
+        "kisses {target} softly. 💕"
+    ],
+    "laugh": [
+        "laughs at {target}! 😂",
+        "giggles at {target}'s antics! LMAO 🤪",
+        "points and laughs at {target}! 🫵"
+    ],
+    "lick": [
+        "licks {target}! 👅",
+        "gives {target} a cheeky lick! 🤪",
+        "licks {target}'s cheek! 😳"
+    ],
+    "lurk": [
+        "lurks around {target}... 👀",
+        "stalks {target} from the shadows. 🕵️‍♀️",
+        "spies on {target}! 🤫"
+    ],
+    "nod": [
+        "nods at {target}... mmhm. 👍",
+        "agrees with {target}. 🤝",
+        "nods in approval to {target}. 👌"
+    ],
+    "nom": [
+        "noms on {target}! 🍿",
+        "takes a playful bite out of {target}! 😈",
+        "nibbles on {target}! 👀"
+    ],
+    "nope": [
+        "says nope to {target}! 🙅",
+        "shakes their head at {target}... no way. 🛑",
+        "rejects {target}'s idea immediately. ✖️"
+    ],
+    "panic": [
+        "panics because of {target}! 😱",
+        "runs around screaming at {target}! 🏃‍♀️",
+        "gets overwhelmed by {target}. 😵"
+    ],
+    "pat": [
+        "pats {target}! 💕",
+        "gently pats {target} on the head. 🌸",
+        "gives {target} some soft headpats. 🥰",
+        "strokes {target}'s hair... cute. 🎀"
+    ],
+    "poke": [
+        "pokes {target}! 👉",
+        "nudges {target} playfully! 🤭",
+        "keeps poking {target}! 🫵"
+    ],
+    "pout": [
+        "pouts at {target}... 🥺",
+        "crosses their arms and pouts at {target}. 😤",
+        "makes a cute pout face at {target}. 💕"
+    ],
+    "punch": [
+        "punches {target}! 👊",
+        "gives {target} a solid punch! 💥",
+        "playfully punches {target}'s arm! 🤜"
+    ],
+    "run": [
+        "runs away from {target}! 🏃‍♀️",
+        "flees from {target}! 💨",
+        "sprints away from {target} in terror! 😱"
+    ],
+    "sad": [
+        "gets sad because of {target}... 🥺",
+        "looks sadly at {target}. 😢",
+        "feels ignored by {target}. 💔"
+    ],
+    "scream": [
+        "screams at {target}! 🗣️",
+        "yells at {target} at the top of their lungs! 📢",
+        "screams in {target}'s face! 😱"
+    ],
+    "shrug": [
+        "shrugs at {target}... whatever. 🤷",
+        "gives {target} a blank shrug. 😶",
+        "shrugs their shoulders at {target}. 🤷‍♀️"
+    ],
+    "slap": [
+        "slaps {target}! 🖐️",
+        "gives {target} a stinging slap! 💥",
+        "slaps {target} across the face! 💀"
+    ],
+    "sleep": [
+        "sleeps next to {target}. 💤",
+        "dozes off on {target}'s shoulder. 🛌",
+        "crashes out with {target}. 😴"
+    ],
+    "smile": [
+        "smiles warmly at {target}! 😊",
+        "grins at {target}! 😄",
+        "gives {target} a sweet smile. 💕"
+    ],
+    "smug": [
+        "looks smugly at {target}... 😏",
+        "grins smugly at {target}. 😈",
+        "acts superior to {target}. 💅"
+    ],
+    "stare": [
+        "stares at {target}... 👁️_👁️",
+        "glares intensely at {target}. 😠",
+        "watches {target} closely. 👀"
+    ],
+    "surprised": [
+        "looks surprised at {target}! 😲",
+        "is shocked by {target}! ⚡",
+        "gaps in surprise at {target}. 🙀"
+    ],
+    "tailwhip": [
+        "tailwhips {target}! 🐉",
+        "swipes {target} with their tail! 💥",
+        "whacks {target} with a tail whip! 🦖"
+    ],
+    "think": [
+        "thinks about {target}... 🤔",
+        "wonders about {target}'s motives. 🧐",
+        "ponders what {target} is up to. 💭"
+    ],
+    "threaten": [
+        "threatens {target}! 🔪",
+        "holds a knife towards {target}... 🗡️",
+        "warns {target} to watch their back! ☠️"
+    ],
+    "thumbsup": [
+        "gives a thumbs up to {target}! 👍",
+        "approves of {target}! 👌",
+        "shows support to {target}. 🤝"
+    ],
+    "tickle": [
+        "tickles {target}! 😂",
+        "attacks {target} with tickles! 🖐️",
+        "gets {target} laughing with tickles! 😹"
+    ],
+    "tired": [
+        "gets tired of {target}... 😴",
+        "sighs exhaustedly at {target}. 🥱",
+        "is sick of {target}'s yapping. 💀"
+    ],
+    "wave": [
+        "waves at {target}! 👋",
+        "waves hello to {target}! 😊",
+        "waves goodbye to {target}. 😭"
+    ],
+    "wink": [
+        "winks at {target}! 😉",
+        "gives {target} a playful wink! 😘",
+        "shoots a wink {target}'s way. 😏"
+    ],
+    "yawn": [
+        "yawns at {target}... boring. 🥱",
+        "yawns sleepily next to {target}. 💤",
+        "stretches and yawns in front of {target}. 🛌"
+    ],
+    "yeet": [
+        "yeets {target}! 💨",
+        "throws {target} into orbit! 🚀",
+        "chucks {target} across the room! 💥"
+    ]
+}
+
+ACTION_SOLO = {
+    "angry": [
+        "gets angry! 💢",
+        "screams in frustration! 😡",
+        "puffs their cheeks in anger! 😤"
+    ],
+    "baka": [
+        "calls themselves a baka... wait, what? 🙄",
+        "reaches peak baka energy. 🤪",
+        "realizes they did something dumb. baka. 🤦‍♀️"
+    ],
+    "bite": [
+        "bites their lip... 👁️👄👁️",
+        "accidentally bites their own tongue! 😭",
+        "chomps on a snack nervously. 🍿"
+    ],
+    "bleh": [
+        "goes bleh! 😛",
+        "sticks their tongue out. 😜",
+        "makes a silly face! 🤪"
+    ],
+    "blowkiss": [
+        "blows a kiss to the air~ 😘",
+        "sends a flying kiss into the void. 💨",
+        "blows a kiss to their own reflection! 💋"
+    ],
+    "blush": [
+        "blushes... crimson red! 😳",
+        "hides their face in embarrassment! 🙈",
+        "gets warm and flustered. 💕"
+    ],
+    "bonk": [
+        "bonks themselves on the head! 🤕",
+        "accidentally bonks into a wall! 🚪",
+        "drops a book on their own foot. 🤦‍♀️"
+    ],
+    "bored": [
+        "is bored out of their mind... 🥱",
+        "stares at the ceiling, dying of boredom. 💤",
+        "spams random messages because they're bored. 📱"
+    ],
+    "carry": [
+        "wants to be carried... 🥺",
+        "wishes someone would pick them up. 🧸",
+        "attempts to carry a giant pile of books. 📚"
+    ],
+    "chase": [
+        "is running in circles! 🏃",
+        "chases their own tail... wait. 🐱",
+        "runs around chasing a butterfly! 🦋"
+    ],
+    "cheer": [
+        "is cheering! 🎉",
+        "does a happy cheer! 🙌",
+        "waves pom-poms around! 📣"
+    ],
+    "clap": [
+        "claps their hands! 👏",
+        "applauds happily! 🎉",
+        "claps to get someone's attention. 👋"
+    ],
+    "confused": [
+        "is highly confused... ❓",
+        "has questions. many questions. 🤔",
+        "brain.exe has stopped working. 😵"
+    ],
+    "cringe": [
+        "cringes internally... 😬",
+        "remembers something they did 5 years ago. 💀",
+        "cringes at their old texts. 🤦‍♀️"
+    ],
+    "cry": [
+        "cries in the corner... 😭",
+        "is sobbing quietly. 🥺",
+        "waterworks are active! 😢"
+    ],
+    "cuddle": [
+        "cuddles a pillow... cozy. 🛌",
+        "wraps themselves in a warm blanket. 🧸",
+        "wants cuddles real bad. 🥺"
+    ],
+    "dance": [
+        "dances alone in their room! 💃",
+        "does a happy victory dance! ✨",
+        "grooves to the music! 🎵"
+    ],
+    "facepalm": [
+        "facepalms... *sigh* 🤦",
+        "does a double facepalm. 🤦‍♀️",
+        "loses hope in humanity. 💀"
+    ],
+    "feed": [
+        "feeds themselves some cake... nom nom. 🍰",
+        "eats a spoonful of Nutella. 🥄",
+        "treats themselves to snacks! 🍬"
+    ],
+    "handhold": [
+        "holds their own hand... lonely. 🥲",
+        "wants to hold someone's hand. 🥺",
+        "puts their hands in their pockets. 🧥"
+    ],
+    "handshake": [
+        "shakes hands with... a ghost? 🤝",
+        "congratulates themselves. 👏",
+        "practices handshakes in the mirror. 🪞"
+    ],
+    "happy": [
+        "is feeling super happy! ✨",
+        "giggles happily! 🥰",
+        "bounces around with joy! 💖"
+    ],
+    "highfive": [
+        "high-fives the mirror! ✋",
+        "high-fives the air. 💨",
+        "left hanging... high-fives themselves. 🥲"
+    ],
+    "hug": [
+        "hugs a teddy bear... 🧸",
+        "gives themselves a big hug! 🥰",
+        "wishes for a warm hug. 🥺"
+    ],
+    "kick": [
+        "kicks the air! 🦵",
+        "playfully kicks a ball. ⚽",
+        "does a high kick. 🤸‍♀️"
+    ],
+    "kiss": [
+        "kisses the mirror... 💋",
+        "blows a kiss to the ceiling. 😘",
+        "wants a kiss. 🥺"
+    ],
+    "laugh": [
+        "laughs out loud! LMAO 😂",
+        "snickers quietly. 🤭",
+        "can't stop laughing! 💀"
+    ],
+    "lick": [
+        "licks... ice cream? 🍦",
+        "licks their lips hungrily. 👅",
+        "tastes something sweet. 🍬"
+    ],
+    "lurk": [
+        "lurks in the shadows... 👀",
+        "lurks around the chat. 🕵️‍♀️",
+        "keeps a low profile... 🤫"
+    ],
+    "nod": [
+        "nods along... mmhm. 👍",
+        "nods silently. 🤝",
+        "nods to themselves. 👌"
+    ],
+    "nom": [
+        "nom noms on some snacks! 🍿",
+        "noms on a slice of pizza! 🍕",
+        "noms happily. 😋"
+    ],
+    "nope": [
+        "says nope and walks away! 🙅",
+        "absolutely not. 🛑",
+        "skips that immediately. ✖️"
+    ],
+    "panic": [
+        "is absolutely panicking! 😱",
+        "screams internally... and externally. 🏃‍♀️",
+        "sweats nervously! 😵"
+    ],
+    "pat": [
+        "pats themselves... how cute. 🌸",
+        "gives themselves a headpat. It's okay. 🥺",
+        "is patting their own head. Needs attention. 🥲"
+    ],
+    "poke": [
+        "pokes the screen! 👈",
+        "pokes their own cheek. 🤭",
+        "pokes a soft toy. 🧸"
+    ],
+    "pout": [
+        "pouts cute... 🥺",
+        "pouts silently. 😤",
+        "does a dramatic pout! 💕"
+    ],
+    "punch": [
+        "punches the air! 👊",
+        "punches a pillow out of anger! 💥",
+        "shadow boxes! 🤜"
+    ],
+    "run": [
+        "runs away! 🏃‍♀️",
+        "sprints off into the sunset! 💨",
+        "is on the run! 🏃"
+    ],
+    "sad": [
+        "is sad... send chocolate. 🥺",
+        "sits under a tiny rain cloud. 😢",
+        "is in their feels. 💔"
+    ],
+    "scream": [
+        "screams into the void! 🗣️",
+        "screams into a pillow. 📢",
+        "lets out a loud shriek! 😱"
+    ],
+    "shrug": [
+        "shrugs... whatever. 🤷",
+        "shrugs because they don't care. 😶",
+        "shrugs in response. 🤷‍♀️"
+    ],
+    "slap": [
+        "slaps their own face... wake up! 🤦‍♀️",
+        "accidentally slaps a mosquito on their own arm. 🖐️",
+        "gets slapped by a tree branch. 🌳"
+    ],
+    "sleep": [
+        "falls fast asleep... zzz. 💤",
+        "crashes onto the bed. 🛌",
+        "naps peacefully. 😴"
+    ],
+    "smile": [
+        "smiles warmly! 😊",
+        "grins happily! 😄",
+        "smiles to themselves. 💕"
+    ],
+    "smug": [
+        "looks incredibly smug... 😏",
+        "does a smug face. 😈",
+        "feels like a genius. 💅"
+    ],
+    "stare": [
+        "stares blankly into space... 👁️_👁️",
+        "zones out completely. 😶",
+        "stares at the wall. 🧱"
+    ],
+    "surprised": [
+        "is completely shocked! 😲",
+        "gasps! ⚡",
+        "can't believe their eyes. 🙀"
+    ],
+    "tailwhip": [
+        "does a tailwhip! 🐉",
+        "spins around and whips their tail. 💥",
+        "accidentally hits a vase with their tail. 🏺"
+    ],
+    "think": [
+        "is deep in thought... 🤔",
+        "ponders the meaning of life. 🧐",
+        "brain is working overtime. 💭"
+    ],
+    "threaten": [
+        "threatens... who exactly? 🔪",
+        "points a plastic fork threateningly. 🍴",
+        "swears revenge on the void. ☠️"
+    ],
+    "thumbsup": [
+        "gives a thumbs up! 👍",
+        "approves! 👌",
+        "congratulates themselves. 👏"
+    ],
+    "tickle": [
+        "tickles themselves... does that even work? 😂",
+        "tries to tickle a pet. 🐾",
+        "giggles from phantom tickles. 👻"
+    ],
+    "tired": [
+        "is tired af... 😴",
+        "yawns... exhausted. 🥱",
+        "needs a 10-hour nap. 🛌"
+    ],
+    "wave": [
+        "waves hello! 👋",
+        "waves to a random stranger. 😳",
+        "waves goodbye. 👋"
+    ],
+    "wink": [
+        "winks playfully! 😉",
+        "practices winking (and fails, blinking instead). 👁️",
+        "winks at their reflection. 🪞"
+    ],
+    "yawn": [
+        "yawns... sleepy. 🥱",
+        "stretches and yawns. 💤",
+        "goes \"aaah\" in a big yawn. 🛌"
+    ],
+    "yeet": [
+        "yeets themselves out of the window! 💨",
+        "yeets their phone onto the bed. 📱",
+        "yeets a water bottle. 🧴"
+    ]
+}
+
+
 
 # Track channels currently undergoing memory compression to prevent concurrent API storms
 active_compressions = set()
@@ -314,10 +938,1945 @@ async def on_ready():
     bot.loop.create_task(status_cycling_loop())
     bot.loop.create_task(story_posting_loop())
 
+
+
+def draw_ship_heart(size, percent, bg_color=(40, 40, 40, 200), fill_color=(230, 40, 40, 255), border_color=(10, 10, 10, 255), border_width=4):
+    import math
+    from PIL import ImageDraw, ImageFont
+    h_img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    
+    cx = size / 2
+    cy = size / 2 - (size * 0.05)
+    
+    scale = size / 35
+    points = []
+    for i in range(300):
+        t = i * (2 * math.pi / 300)
+        x = 16 * (math.sin(t) ** 3)
+        y = -(13 * math.cos(t) - 5 * math.cos(2*t) - 2 * math.cos(3*t) - math.cos(4*t))
+        points.append((cx + x * scale, cy + y * scale))
+        
+    ys = [p[1] for p in points]
+    min_y = min(ys)
+    max_y = max(ys)
+    h_height = max_y - min_y
+    
+    fill_y = max_y - (h_height * (percent / 100))
+    
+    mask = Image.new("L", (size, size), 0)
+    mask_draw = ImageDraw.Draw(mask)
+    mask_draw.polygon(points, fill=255)
+    
+    bg_img = Image.new("RGBA", (size, size), bg_color)
+    fill_img = Image.new("RGBA", (size, size), fill_color)
+    
+    combined = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    combined.paste(bg_img, (0, 0), mask=mask)
+    
+    fill_rect_mask = Image.new("L", (size, size), 0)
+    frm_draw = ImageDraw.Draw(fill_rect_mask)
+    frm_draw.rectangle([0, int(fill_y), size, size], fill=255)
+    
+    final_fill_mask = Image.new("L", (size, size), 0)
+    final_fill_mask.paste(mask, (0, 0), mask=fill_rect_mask)
+    
+    combined.paste(fill_img, (0, 0), mask=final_fill_mask)
+    
+    draw_comb = ImageDraw.Draw(combined)
+    draw_comb.line(points + [points[0]], fill=border_color, width=border_width)
+    
+    try:
+        font = ImageFont.truetype("arialbd.ttf", int(size * 0.16))
+    except:
+        font = ImageFont.load_default()
+        
+    txt = f"{percent}%"
+    try:
+        bbox = draw_comb.textbbox((0, 0), txt, font=font)
+        tw = bbox[2] - bbox[0]
+        th = bbox[3] - bbox[1]
+    except AttributeError:
+        tw, th = draw_comb.textsize(txt, font=font)
+        
+    tx = cx - tw / 2
+    ty = cy - th / 2
+    
+    shadow_offset = 2
+    for dx in [-shadow_offset, 0, shadow_offset]:
+        for dy in [-shadow_offset, 0, shadow_offset]:
+            if dx != 0 or dy != 0:
+                draw_comb.text((tx + dx, ty + dy), txt, fill=(0, 0, 0, 255), font=font)
+                
+    draw_comb.text((tx, ty), txt, fill=(255, 255, 255, 255), font=font)
+    
+    return combined
+
+def get_help_embed(category: str, bot_user=None) -> discord.Embed:
+    if category == "General & Utility":
+        embed = discord.Embed(
+            title="🛠️ General & Utility Commands",
+            description="Basic commands to look up info or use bot features.",
+            color=discord.Color.from_rgb(212, 175, 230)
+        )
+        embed.add_field(name="👉 `$afk [reason]`", value="Set your AFK status (clears when you talk again).", inline=False)
+        embed.add_field(name="👉 `$ship [@user]`", value="Ship two users and generate a cute compatibility card! 💖", inline=False)
+        embed.add_field(name="👉 `$avatar` / `$av` `[@user]`", value="Get a user's avatar.", inline=False)
+        embed.add_field(name="👉 `$anime [query]`", value="Search MyAnimeList for anime details.", inline=False)
+        embed.add_field(name="👉 `$manga [query]`", value="Search MyAnimeList for manga details.", inline=False)
+        embed.add_field(name="👉 `$movie` / `$show` `[query]`", value="Search IMDb for movie/show details.", inline=False)
+        embed.add_field(name="👉 `$ping`", value="Check the bot's latency.", inline=False)
+        embed.add_field(name="👉 `$uptime`", value="Check how long the bot has been awake.", inline=False)
+        embed.add_field(name="👉 `$server`", value="Check server details.", inline=False)
+    elif category == "Interactive Utilities":
+        embed = discord.Embed(
+            title="⚙️ Interactive Utilities",
+            description="Helpful tools to get info or run utility tasks.",
+            color=discord.Color.from_rgb(175, 238, 238)
+        )
+        embed.add_field(name="👉 `$weather [city]`", value="Check the current weather for a city.", inline=False)
+        embed.add_field(name="👉 `$poll [question] | [option1] | [option2] | ...`", value="Create a reaction-based poll (up to 10 choices).", inline=False)
+    elif category == "Interactive & Fun":
+        embed = discord.Embed(
+            title="🎭 Interactive & Fun Commands",
+            description="Fun commands to pass the time or play around.",
+            color=discord.Color.from_rgb(255, 182, 193)
+        )
+        embed.add_field(name="👉 `$confess [confession]` (DM only)", value="Submit an anonymous confession to the server.", inline=False)
+        embed.add_field(name="👉 `$choose [options]`", value="Let Reze choose between options separated by `|` or commas.", inline=False)
+        embed.add_field(name="👉 `$waifu` / `$husbando`", value="Fetch a random anime character image.", inline=False)
+        embed.add_field(name="👉 `$quote`", value="Get a random anime quote.", inline=False)
+        embed.add_field(name="👉 `$cat` / `$dog`", value="Get a random cute cat or dog picture.", inline=False)
+    elif category == "Affection Actions":
+        embed = discord.Embed(
+            title="🌸 Affection Actions",
+            description="Use these actions to express affection to someone: `$[action] [@user]` or `$random`.",
+            color=discord.Color.from_rgb(255, 182, 193)
+        )
+        embed.add_field(name="Commands list", value="`pat`, `hug`, `kiss`, `cuddle`, `handhold`, `feed`, `tickle`, `highfive`, `cheer`, `wink`, `smile`, `happy`, `blowkiss`", inline=False)
+    elif category == "Expression Actions":
+        embed = discord.Embed(
+            title="✨ Expression Actions",
+            description="Use these to express how you are feeling: `$[action] [@user]` or `$random`.",
+            color=discord.Color.from_rgb(224, 187, 228)
+        )
+        embed.add_field(name="Commands list", value="`blush`, `cry`, `cringe`, `confused`, `facepalm`, `bored`, `tired`, `sleep`, `sad`, `scream`, `panic`, `yawn`, `surprised`, `chase`, `run`, `handshake`, `tailwhip`, `nope`", inline=False)
+    elif category == "Playful Actions":
+        embed = discord.Embed(
+            title="🐱 Playful Actions",
+            description="Fun and playful commands to interact: `$[action] [@user]` or `$random`.",
+            color=discord.Color.from_rgb(255, 223, 186)
+        )
+        embed.add_field(name="Commands list", value="`poke`, `nom`, `lick`, `bleh`, `wave`, `dance`, `smug`, `shrug`, `nod`, `thumbsup`, `lurk`, `think`, `stare`", inline=False)
+    elif category == "Chaos Actions":
+        embed = discord.Embed(
+            title="💥 Chaos Actions",
+            description="Bring some chaos to the chat: `$[action] [@user]` or `$random`.",
+            color=discord.Color.from_rgb(255, 105, 97)
+        )
+        embed.add_field(name="Commands list", value="`slap`, `punch`, `kick`, `yeet`, `bite`, `bonk`, `threaten`, `angry`, `baka`", inline=False)
+    elif category == "Server & Settings":
+        embed = discord.Embed(
+            title="⚙️ Server & Settings Commands",
+            description="Slash commands to configure the bot for this server.",
+            color=discord.Color.from_rgb(175, 238, 238)
+        )
+        embed.add_field(name="👉 `/setup`", value="Configure all server channels and roles.", inline=False)
+        embed.add_field(name="👉 `/setrole [type] [role]`", value="Manually assign gender, hinglish, or nsfw roles.", inline=False)
+        embed.add_field(name="👉 `/setchannel [type] [channel]`", value="Assign bot-specific channels.", inline=False)
+        embed.add_field(name="👉 `/resetconfig`", value="Reset this server's configuration.", inline=False)
+        embed.add_field(name="👉 `/nsfw` (DMs only)", value="Toggle NSFW mode in DMs.", inline=False)
+    elif category == "E-Family System":
+        embed = discord.Embed(
+            title="👪 E-Family System",
+            description="Build your virtual family with marriage, adoption, and more!",
+            color=discord.Color.from_rgb(255, 215, 0)
+        )
+        embed.add_field(name="👉 `$marry [@user]`", value="Propose marriage to another user (requires acceptance).", inline=False)
+        embed.add_field(name="👉 `$adopt [@user]`", value="Propose to adopt another user as your child (requires acceptance).", inline=False)
+        embed.add_field(name="👉 `$divorce`", value="Divorce your current spouse.", inline=False)
+        embed.add_field(name="👉 `$disown [@user]`", value="Disown one of your children.", inline=False)
+        embed.add_field(name="👉 `$abandon [@user]`", value="Abandon one of your parents.", inline=False)
+        embed.add_field(name="👉 `$runaway`", value="Run away from home (removes all parents).", inline=False)
+        embed.add_field(name="👉 `$disownall`", value="Disown all of your children at once.", inline=False)
+        embed.add_field(name="👉 `$family` `[@user]`", value="Show the family details and tree of a user (defaults to you).", inline=False)
+    else:
+        embed = discord.Embed(
+            title="🌸 REZE COMMAND MENU 🌸",
+            description="*\"obviously, i'm the best bot in this server. here's a breakdown of my commands and features. try not to break anything or spam me, or i'll literally put you on my ignore list 🙄\"*",
+            color=discord.Color.from_rgb(212, 175, 230)
+        )
+        embed.add_field(
+            name="💬 Chatting with Me",
+            value="Mention me or reply to my messages to talk. If you say my name (`reze`) in any text, I might respond. But don't spam me or I'll put you on my ignore list (grudge system) 🙄.",
+            inline=False
+        )
+        embed.add_field(
+            name="🎭 Dynamic Moods",
+            value="My personality shifts dynamically! I can be `NORMAL`, `LAZY`, `YAPPING`, `ANNOYED`, `BORED`, `HUNGRY`, `DISTRACTED` (playing Valorant), or `DRUNK` (tipsy mode on Fri/Sat nights).",
+            inline=False
+        )
+        embed.add_field(
+            name="📖 Command Categories",
+            value="🛠️ **General & Utility:** Basic lookup, ship, search, etc.\n"
+                  "⚙️ **Interactive Utilities:** Weather, poll.\n"
+                  "🎭 **Interactive & Fun:** Confessions, choice, waifu/husbando, quotes, animals.\n"
+                  "👪 **E-Family System:** Marry, adopt, divorce, disown, family tree.\n"
+                  "🌸 **Actions & Emotes:** Affection, Expression, Playful, and Chaos action emojis.",
+            inline=False
+        )
+        if bot_user and bot_user.avatar:
+            embed.set_thumbnail(url=bot_user.avatar.url)
+            
+    embed.set_footer(text="Select another category in the dropdown to navigate! 💖")
+    return embed
+
+class HelpSelect(discord.ui.Select):
+    def __init__(self):
+        options = [
+            discord.SelectOption(label="Landing Page", description="Back to main welcome page", emoji="🌸"),
+            discord.SelectOption(label="General & Utility", description="Basic commands, shipping, search, etc.", emoji="🛠️"),
+            discord.SelectOption(label="Interactive Utilities", description="Weather, polls, etc.", emoji="⚙️"),
+            discord.SelectOption(label="Interactive & Fun", description="Confess, choose, waifu, quotes...", emoji="🎭"),
+            discord.SelectOption(label="E-Family System", description="Marry, adopt, divorce, disown, family tree...", emoji="👪"),
+            discord.SelectOption(label="Affection Actions", description="Pat, hug, kiss, cuddle...", emoji="🌸"),
+            discord.SelectOption(label="Expression Actions", description="Blush, cry, yawn, sleep...", emoji="✨"),
+            discord.SelectOption(label="Playful Actions", description="Poke, dance, smug, bleh...", emoji="🐱"),
+            discord.SelectOption(label="Chaos Actions", description="Slap, yeet, punch, bonk...", emoji="💥"),
+            discord.SelectOption(label="Server & Settings", description="Slash commands for configuration.", emoji="⚙️")
+        ]
+        super().__init__(placeholder="Select a category to view commands...", min_values=1, max_values=1, options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        embed = get_help_embed(self.values[0], interaction.client.user)
+        await interaction.response.edit_message(embed=embed)
+
+class HelpView(discord.ui.View):
+    def __init__(self, author):
+        super().__init__(timeout=60.0)
+        self.author = author
+        self.add_item(HelpSelect())
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user != self.author:
+            await interaction.response.send_message("this menu isn't for you, dummy 🙄", ephemeral=True)
+            return False
+        return True
+
+class ProposalView(discord.ui.View):
+    def __init__(self, author, target, proposal_type):
+        super().__init__(timeout=60.0)
+        self.author = author
+        self.target = target
+        self.proposal_type = proposal_type
+        self.accepted = None
+
+    @discord.ui.button(label="Accept 💖", style=discord.ButtonStyle.success)
+    async def accept(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.target.id:
+            await interaction.response.send_message("this proposal isn't for you, dummy 🙄", ephemeral=True)
+            return
+        self.accepted = True
+        self.stop()
+        await interaction.response.edit_message(view=None)
+
+    @discord.ui.button(label="Decline 💔", style=discord.ButtonStyle.danger)
+    async def decline(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.target.id:
+            await interaction.response.send_message("this proposal isn't for you, dummy 🙄", ephemeral=True)
+            return
+        self.accepted = False
+        self.stop()
+        await interaction.response.edit_message(view=None)
+
+    async def on_timeout(self):
+        self.accepted = False
+
+
+# --- E-FAMILY HELPERS ---
+
+async def get_guild_member_name(guild, user_id: str, bot) -> str:
+    import re
+    def clean_name(name: str) -> str:
+        if not name: return name
+        return re.sub(r'\s*\((self|spouse|father|mother|grandparent|parent|sibling|child|grandchild)\)\s*$', '', name, flags=re.IGNORECASE)
+
+    # 1. Try Discord's local cache (instant)
+    try:
+        uid = int(user_id)
+        if guild:
+            member = guild.get_member(uid)
+            if member:
+                return clean_name(member.nick or member.display_name)
+        user = bot.get_user(uid)
+        if user:
+            return clean_name(user.display_name)
+    except Exception:
+        pass
+
+    # 2. Try Database lookup (very fast cache lookup)
+    try:
+        user_data = await db.get_user_data(user_id)
+        if user_data and user_data.get("display_name"):
+            return clean_name(user_data.get("display_name"))
+    except Exception:
+        pass
+
+    # 3. Only perform API calls as a last resort
+    try:
+        uid = int(user_id)
+        if guild:
+            try:
+                member = await guild.fetch_member(uid)
+                if member:
+                    return clean_name(member.nick or member.display_name)
+            except Exception:
+                pass
+        try:
+            user = await bot.fetch_user(uid)
+            if user:
+                return clean_name(user.display_name)
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+    return f"Unknown User ({user_id})"
+
+async def generate_family_tree_image(user_id: str, guild, bot) -> bytes:
+    # 1. Fetch relations
+    self_fam = await db.get_family(user_id)
+    self_name = await get_guild_member_name(guild, user_id, bot)
+    
+    spouse_id = self_fam.get("spouse")
+    spouse_name = await get_guild_member_name(guild, spouse_id, bot) if spouse_id else None
+    
+    parent_ids = self_fam.get("parents", [])
+    parents = []
+    grandparents = []
+    
+    parent_to_gp_map = {}
+    
+    for p_id in parent_ids:
+        p_name = await get_guild_member_name(guild, p_id, bot)
+        parents.append(p_name)
+        
+        p_fam = await db.get_family(p_id)
+        gp_list = []
+        for gp_id in p_fam.get("parents", []):
+            gp_name = await get_guild_member_name(guild, gp_id, bot)
+            if gp_name not in grandparents:
+                grandparents.append(gp_name)
+            gp_list.append(gp_name)
+        parent_to_gp_map[p_name] = gp_list
+                
+    sibling_ids = set()
+    for p_id in parent_ids:
+        p_fam = await db.get_family(p_id)
+        for sib_id in p_fam.get("children", []):
+            if sib_id != user_id:
+                sibling_ids.add(sib_id)
+                
+    siblings = []
+    for sib_id in sibling_ids:
+        sib_name = await get_guild_member_name(guild, sib_id, bot)
+        siblings.append(sib_name)
+        
+    children_ids = self_fam.get("children", [])
+    children_tree = []
+    has_grandchildren = False
+    
+    for c_id in children_ids:
+        c_name = await get_guild_member_name(guild, c_id, bot)
+        c_fam = await db.get_family(c_id)
+        grandchildren_ids = c_fam.get("children", [])
+        grandchildren_names = []
+        for gc_id in grandchildren_ids:
+            gc_name = await get_guild_member_name(guild, gc_id, bot)
+            grandchildren_names.append(gc_name)
+            has_grandchildren = True
+        children_tree.append({"name": c_name, "grandchildren": grandchildren_names})
+
+    # 2. Layout Elements Setup
+    # Grandparents
+    grandparents_elements = []
+    for p_name, gp_names in parent_to_gp_map.items():
+        if len(gp_names) == 2:
+            grandparents_elements.append({
+                "type": "couple",
+                "name1": gp_names[0],
+                "name2": gp_names[1],
+                "key1": f"gp_{gp_names[0]}",
+                "key2": f"gp_{gp_names[1]}"
+            })
+        else:
+            for gp in gp_names:
+                grandparents_elements.append({"type": "single", "name": gp, "key": f"gp_{gp}"})
+    for gp in grandparents:
+        found = False
+        for el in grandparents_elements:
+            if el["type"] == "single" and el["name"] == gp:
+                found = True
+            elif el["type"] == "couple" and (el["name1"] == gp or el["name2"] == gp):
+                found = True
+        if not found:
+            grandparents_elements.append({"type": "single", "name": gp, "key": f"gp_{gp}"})
+
+    # Parents
+    parents_elements = []
+    if len(parents) == 2:
+        parents_elements.append({
+            "type": "couple",
+            "name1": parents[0],
+            "name2": parents[1],
+            "key1": f"p_{parents[0]}",
+            "key2": f"p_{parents[1]}"
+        })
+    else:
+        for p in parents:
+            parents_elements.append({"type": "single", "name": p, "key": f"p_{p}"})
+
+    # Generation 1 (Self & Siblings)
+    half_sib = len(siblings) // 2
+    sib_left = siblings[:half_sib]
+    sib_right = siblings[half_sib:]
+    
+    generation1_elements = []
+    for sib in sib_left:
+        generation1_elements.append({"type": "single", "name": sib, "key": f"sib_{sib}"})
+        
+    if spouse_name:
+        generation1_elements.append({
+            "type": "couple",
+            "name1": self_name,
+            "name2": spouse_name,
+            "key1": "self",
+            "key2": "spouse"
+        })
+    else:
+        generation1_elements.append({"type": "single", "name": self_name, "key": "self"})
+        
+    for sib in sib_right:
+        generation1_elements.append({"type": "single", "name": sib, "key": f"sib_{sib}"})
+
+    # Children
+    children_elements = []
+    for child in children_tree:
+        children_elements.append({"type": "single", "name": child["name"], "key": f"c_{child['name']}"})
+
+    # Grandchildren
+    grandchildren_elements = []
+    for child in children_tree:
+        for gc in child["grandchildren"]:
+            grandchildren_elements.append({"type": "single", "name": gc, "key": f"gc_{gc}"})
+
+    # 3. Size and Geometry Calculations
+    G = 65 # gap between elements
+    card_w, card_h = 190, 56
+    
+    def get_element_width(el):
+        return 460 if el["type"] == "couple" else 190
+        
+    def get_layer_width(elements):
+        if not elements: return 0
+        return sum(get_element_width(el) for el in elements) + (len(elements) - 1) * G
+        
+    widths = [
+        get_layer_width(grandparents_elements),
+        get_layer_width(parents_elements),
+        get_layer_width(generation1_elements),
+        get_layer_width(children_elements),
+        get_layer_width(grandchildren_elements)
+    ]
+    width = max(1200, max(widths) + 120)
+    
+    y_coords = {}
+    current_y = 120
+    
+    if grandparents_elements:
+        y_coords["grandparents"] = current_y
+        current_y += 140
+        
+    if parents_elements:
+        y_coords["parents"] = current_y
+        current_y += 140
+        
+    y_coords["self"] = current_y
+    current_y += 140
+    
+    if children_elements:
+        y_coords["children"] = current_y
+        current_y += 140
+        
+    if grandchildren_elements:
+        y_coords["grandchildren"] = current_y
+        current_y += 140
+        
+    height = current_y + 40
+    
+    from PIL import Image, ImageDraw, ImageFont
+    
+    img = Image.new("RGBA", (width, height), (24, 18, 36, 255))
+    draw = ImageDraw.Draw(img)
+    
+    glow = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    glow_draw = ImageDraw.Draw(glow)
+    glow_draw.ellipse([-200, -200, 400, 400], fill=(120, 80, 200, 40))
+    glow_draw.ellipse([width-400, height-400, width+200, height+200], fill=(200, 80, 150, 45))
+    img = Image.alpha_composite(img, glow)
+    draw = ImageDraw.Draw(img)
+    
+    try:
+        title_font = ImageFont.truetype("arialbd.ttf", 36)
+        name_font = ImageFont.truetype("arialbd.ttf", 15)
+    except IOError:
+        title_font = ImageFont.load_default()
+        name_font = ImageFont.load_default()
+        
+    title_text = f"{self_name}'s Family Tree"
+    try:
+        t_w = title_font.getbbox(title_text)[2] - title_font.getbbox(title_text)[0]
+    except Exception:
+        t_w = draw.textlength(title_text, font=title_font)
+    draw.text(((width - t_w)//2, 35), title_text, fill=(255, 215, 0, 255), font=title_font)
+
+    # 4. Lay out the coordinates
+    node_coords = {}
+    
+    def layout_layer(elements, y):
+        if not elements: return
+        layer_w = get_layer_width(elements)
+        start_x = (width - layer_w) / 2
+        current_x = start_x
+        for el in elements:
+            el_w = get_element_width(el)
+            if el["type"] == "single":
+                cx = int(current_x + el_w / 2)
+                node_coords[el["key"]] = (cx, y)
+            elif el["type"] == "couple":
+                cx1 = int(current_x + 190 / 2)
+                cx2 = int(current_x + 190 + 80 + 190 / 2)
+                node_coords[el["key1"]] = (cx1, y)
+                node_coords[el["key2"]] = (cx2, y)
+            current_x += el_w + G
+            
+    if grandparents_elements:
+        layout_layer(grandparents_elements, y_coords["grandparents"])
+    if parents_elements:
+        layout_layer(parents_elements, y_coords["parents"])
+        
+    layout_layer(generation1_elements, y_coords["self"])
+    
+    if children_elements:
+        layout_layer(children_elements, y_coords["children"])
+    if grandchildren_elements:
+        layout_layer(grandchildren_elements, y_coords["grandchildren"])
+
+    # 5. Connection Lines (Bus layout to prevent crossing through cards)
+    def draw_bus_connection(src_point, target_keys, target_y, bus_y_offset=0):
+        target_xs = [node_coords[k][0] for k in target_keys if k in node_coords]
+        if not target_xs: return
+        
+        min_x = min(target_xs)
+        max_x = max(target_xs)
+        
+        span_min_x = min(src_point[0], min_x)
+        span_max_x = max(src_point[0], max_x)
+        
+        bus_y = (src_point[1] + target_y) // 2 + bus_y_offset
+        
+        # Vertical down from source to bus line
+        draw.line([src_point[0], src_point[1], src_point[0], bus_y], fill=(100, 100, 180, 150), width=3)
+        # Horizontal bus line
+        draw.line([span_min_x, bus_y, span_max_x, bus_y], fill=(100, 100, 180, 150), width=3)
+        # Vertical down from bus line to each target
+        for tx in target_xs:
+            draw.line([tx, bus_y, tx, target_y], fill=(100, 100, 180, 150), width=3)
+
+    # Draw couple connection lines
+    for el in grandparents_elements:
+        if el["type"] == "couple":
+            x1 = node_coords[el["key1"]][0]
+            x2 = node_coords[el["key2"]][0]
+            y = y_coords["grandparents"]
+            draw.line([x1 + card_w // 2, y, x2 - card_w // 2, y], fill=(100, 100, 180, 150), width=3)
+            
+    for el in parents_elements:
+        if el["type"] == "couple":
+            x1 = node_coords[el["key1"]][0]
+            x2 = node_coords[el["key2"]][0]
+            y = y_coords["parents"]
+            draw.line([x1 + card_w // 2, y, x2 - card_w // 2, y], fill=(100, 100, 180, 150), width=3)
+            
+    if spouse_name:
+        x1 = node_coords["self"][0]
+        x2 = node_coords["spouse"][0]
+        y = y_coords["self"]
+        draw.line([x1 + card_w // 2, y, x2 - card_w // 2, y], fill=(255, 105, 180, 150), width=3)
+
+    # Grandparents to Parents
+    for p_name, gp_names in parent_to_gp_map.items():
+        parent_key = f"p_{p_name}"
+        if parent_key in node_coords:
+            couple_el = None
+            for el in grandparents_elements:
+                if el["type"] == "couple" and el["name1"] in gp_names and el["name2"] in gp_names:
+                    couple_el = el
+                    break
+            if couple_el:
+                x1 = node_coords[couple_el["key1"]][0]
+                x2 = node_coords[couple_el["key2"]][0]
+                gp_center = ((x1 + x2) // 2, y_coords["grandparents"])
+                mid_y = (gp_center[1] + y_coords["parents"]) // 2
+                draw.line([gp_center[0], gp_center[1], gp_center[0], mid_y], fill=(100, 100, 180, 150), width=3)
+                draw.line([gp_center[0], mid_y, node_coords[parent_key][0], mid_y], fill=(100, 100, 180, 150), width=3)
+                draw.line([node_coords[parent_key][0], mid_y, node_coords[parent_key][0], y_coords["parents"]], fill=(100, 100, 180, 150), width=3)
+            else:
+                for gp in gp_names:
+                    gp_key = f"gp_{gp}"
+                    if gp_key in node_coords:
+                        x1, y1 = node_coords[gp_key]
+                        x2, y2 = node_coords[parent_key]
+                        mid_y = (y1 + y2) // 2
+                        draw.line([x1, y1, x1, mid_y], fill=(100, 100, 180, 150), width=3)
+                        draw.line([x1, mid_y, x2, mid_y], fill=(100, 100, 180, 150), width=3)
+                        draw.line([x2, mid_y, x2, y2], fill=(100, 100, 180, 150), width=3)
+
+    # Parents to Self & Siblings
+    if parents_elements:
+        if parents_elements[0]["type"] == "couple":
+            el = parents_elements[0]
+            x1 = node_coords[el["key1"]][0]
+            x2 = node_coords[el["key2"]][0]
+            src_point = ((x1 + x2) // 2, y_coords["parents"])
+        else:
+            p_name = parents[0]
+            src_point = node_coords[f"p_{p_name}"]
+            
+        target_keys = ["self"] + [f"sib_{sib}" for sib in siblings]
+        draw_bus_connection(src_point, target_keys, y_coords["self"])
+
+    # Self & Spouse to Children
+    if children_elements:
+        if spouse_name:
+            x1 = node_coords["self"][0]
+            x2 = node_coords["spouse"][0]
+            src_point = ((x1 + x2) // 2, y_coords["self"])
+        else:
+            src_point = node_coords["self"]
+            
+        target_keys = [f"c_{child['name']}" for child in children_tree]
+        draw_bus_connection(src_point, target_keys, y_coords["children"])
+
+    # Children to Grandchildren
+    if grandchildren_elements:
+        parent_children = [c for c in children_tree if c["grandchildren"]]
+        for idx, child in enumerate(parent_children):
+            c_name = child["name"]
+            c_key = f"c_{c_name}"
+            if c_key in node_coords:
+                target_gcs = [f"gc_{gc}" for gc in child["grandchildren"]]
+                offset = (idx - (len(parent_children) - 1) / 2) * 16
+                draw_bus_connection(node_coords[c_key], target_gcs, y_coords["grandchildren"], bus_y_offset=int(offset))
+
+    # 6. Draw Cards
+    def draw_card(cx, cy, name, is_self=False, is_spouse=False):
+        left = cx - card_w // 2
+        top = cy - card_h // 2
+        right = left + card_w
+        bottom = top + card_h
+        
+        bg_color = (138, 43, 226, 70) if is_self else ((219, 112, 147, 70) if is_spouse else (40, 40, 70, 200))
+        border_color = (255, 215, 0, 240) if is_self else ((255, 105, 180, 220) if is_spouse else (100, 100, 180, 255))
+        
+        draw.rounded_rectangle([left, top, right, bottom], radius=10, fill=bg_color, outline=border_color, width=2)
+        draw.text((cx, cy), name, fill=(255, 255, 255, 255), font=name_font, anchor="mm")
+
+    for key, (cx, cy) in node_coords.items():
+        if key == "self":
+            draw_card(cx, cy, self_name, is_self=True)
+        elif key == "spouse":
+            draw_card(cx, cy, spouse_name, is_spouse=True)
+        else:
+            clean_name = ""
+            if key.startswith("gp_"): clean_name = key[3:]
+            elif key.startswith("p_"): clean_name = key[2:]
+            elif key.startswith("sib_"): clean_name = key[4:]
+            elif key.startswith("c_"): clean_name = key[2:]
+            elif key.startswith("gc_"): clean_name = key[3:]
+            draw_card(cx, cy, clean_name)
+            
+    if spouse_name and "self" in node_coords and "spouse" in node_coords:
+        x1 = node_coords["self"][0]
+        x2 = node_coords["spouse"][0]
+        y = y_coords["self"]
+        draw.text(((x1 + x2) // 2, y), "💖", fill=(255, 20, 147, 255), font=name_font, anchor="mm")
+
+    import io
+    output_buffer = io.BytesIO()
+    img.save(output_buffer, format="PNG")
+    output_buffer.seek(0)
+    return output_buffer.getvalue()
+
+
+# --- E-FAMILY HELPERS ---
+
+async def get_user_name(user_id: str, bot) -> str:
+    try:
+        uid = int(user_id)
+        user = bot.get_user(uid)
+        if not user:
+            user = await bot.fetch_user(uid)
+        return user.display_name
+    except Exception:
+        user_data = await db.get_user_data(user_id)
+        if user_data and user_data.get("display_name"):
+            return user_data.get("display_name")
+        return f"Unknown User ({user_id})"
+
+async def is_ancestor(user_id: str, potential_ancestor_id: str) -> bool:
+    """Check if potential_ancestor_id is a parent, grandparent, etc. of user_id"""
+    visited = set()
+    queue = [user_id]
+    while queue:
+        curr = queue.pop(0)
+        if curr == potential_ancestor_id:
+            return True
+        if curr in visited:
+            continue
+        visited.add(curr)
+        
+        fam = await db.get_family(curr)
+        parents = fam.get("parents", [])
+        for p in parents:
+            if p not in visited:
+                queue.append(p)
+    return False
+
+async def get_family_tree_text(user_id: str, bot) -> str:
+    self_fam = await db.get_family(user_id)
+    self_name = await get_user_name(user_id, bot)
+    
+    spouse_id = self_fam.get("spouse")
+    spouse_name = await get_user_name(spouse_id, bot) if spouse_id else None
+    
+    parent_ids = self_fam.get("parents", [])
+    parents_info = []
+    grandparents_info = []
+    
+    for p_id in parent_ids:
+        p_name = await get_user_name(p_id, bot)
+        parents_info.append((p_id, p_name))
+        
+        p_fam = await db.get_family(p_id)
+        for gp_id in p_fam.get("parents", []):
+            gp_name = await get_user_name(gp_id, bot)
+            if gp_id not in [g[0] for g in grandparents_info]:
+                grandparents_info.append((gp_id, gp_name))
+                
+    sibling_ids = set()
+    for p_id in parent_ids:
+        p_fam = await db.get_family(p_id)
+        for sib_id in p_fam.get("children", []):
+            if sib_id != user_id:
+                sibling_ids.add(sib_id)
+                
+    siblings_info = []
+    for sib_id in sibling_ids:
+        sib_name = await get_user_name(sib_id, bot)
+        siblings_info.append(sib_name)
+        
+    children_ids = self_fam.get("children", [])
+    children_tree = []
+    
+    for c_id in children_ids:
+        c_name = await get_user_name(c_id, bot)
+        c_fam = await db.get_family(c_id)
+        grandchildren_ids = c_fam.get("children", [])
+        grandchildren_names = []
+        for gc_id in grandchildren_ids:
+            gc_name = await get_user_name(gc_id, bot)
+            grandchildren_names.append(gc_name)
+        children_tree.append((c_name, grandchildren_names))
+        
+    lines = []
+    
+    # Grandparents
+    if grandparents_info:
+        lines.append("👵👴 Grandparents")
+        for i, (gp_id, gp_name) in enumerate(grandparents_info):
+            char = "└──" if i == len(grandparents_info) - 1 else "├──"
+            lines.append(f"  {char} {gp_name}")
+        lines.append("")
+        
+    # Parents
+    if parents_info:
+        lines.append("👨‍👩‍👦 Parents")
+        for i, (p_id, p_name) in enumerate(parents_info):
+            char = "└──" if i == len(parents_info) - 1 else "├──"
+            lines.append(f"  {char} {p_name}")
+        lines.append("")
+        
+    # Siblings
+    if siblings_info:
+        lines.append("👦👧 Siblings")
+        for i, sib_name in enumerate(siblings_info):
+            char = "└──" if i == len(siblings_info) - 1 else "├──"
+            lines.append(f"  {char} {sib_name}")
+        lines.append("")
+        
+    # Self & Spouse
+    lines.append("💑 Self & Partner")
+    self_spouse_str = f"{self_name} (Self)"
+    if spouse_name:
+        self_spouse_str += f" 💖 {spouse_name} (Spouse)"
+    lines.append(f"  └── {self_spouse_str}")
+    
+    # Children & Grandchildren
+    if children_tree:
+        for i, (c_name, gc_list) in enumerate(children_tree):
+            c_char = "└──" if i == len(children_tree) - 1 else "├──"
+            lines.append(f"      {c_char} 👶 {c_name}")
+            if gc_list:
+                for j, gc_name in enumerate(gc_list):
+                    gc_char = "└──" if j == len(gc_list) - 1 else "├──"
+                    prefix = "          " if i == len(children_tree) - 1 else "      │   "
+                    lines.append(f"{prefix}{gc_char} 🍼 {gc_name}")
+                    
+    return "\n".join(lines)
+
+
 @bot.event
 async def on_message(message):
     if message.author.bot:
         return
+
+    user_id = message.author.id
+    current_time = time.time()
+
+    # Clear AFK status if user speaks
+    if user_id in afk_users:
+        data = afk_users.pop(user_id)
+        duration = current_time - data["time"]
+        m, s = divmod(int(duration), 60)
+        h, m = divmod(m, 60)
+        time_str = f"{s}s"
+        if m > 0: time_str = f"{m}m {time_str}"
+        if h > 0: time_str = f"{h}h {time_str}"
+        
+        await message.channel.send(f"wb **{message.author.display_name}**! I've cleared your AFK status. You were gone for **{time_str}**.")
+
+    # Check if mentioned users are AFK
+    for mention in message.mentions:
+        if mention.id in afk_users and mention.id != user_id:
+            data = afk_users[mention.id]
+            duration = current_time - data["time"]
+            m, s = divmod(int(duration), 60)
+            h, m = divmod(m, 60)
+            time_str = f"{s}s"
+            if m > 0: time_str = f"{m}m {time_str}"
+            if h > 0: time_str = f"{h}h {time_str}"
+            
+            await message.reply(f"**{mention.display_name}** is currently AFK: **{data['reason']}** (since {time_str} ago) 💤")
+
+    # --- PREFIX COMMAND HANDLER ---
+    if message.content.startswith('$'):
+        # Rate limit check per user for prefix commands (max 3 commands per 10s)
+        if user_id not in user_command_timestamps:
+            user_command_timestamps[user_id] = []
+        user_command_timestamps[user_id] = [t for t in user_command_timestamps[user_id] if current_time - t < 10]
+        if len(user_command_timestamps[user_id]) >= 3:
+            await message.reply("chill, stop spamming commands so fast 🙄", delete_after=5)
+            return
+        user_command_timestamps[user_id].append(current_time)
+
+        content = message.content[1:].strip()
+        if content:
+            parts = content.split(None, 1)
+            command = parts[0].lower()
+            args = parts[1] if len(parts) > 1 else ""
+
+            # Command-specific or default 3s cooldown check (skip help)
+            if command != "help":
+                cooldown_duration = COOLDOWN_TIMES.get(command, 3)
+                if command not in command_cooldown_timestamps:
+                    command_cooldown_timestamps[command] = {}
+                
+                last_used = command_cooldown_timestamps[command].get(user_id, 0)
+                time_passed = current_time - last_used
+                if time_passed < cooldown_duration:
+                    time_remaining = int(cooldown_duration - time_passed)
+                    if time_remaining >= 60:
+                        m, s = divmod(time_remaining, 60)
+                        rem_str = f"{m}m {s}s"
+                    else:
+                        rem_str = f"{time_remaining}s"
+                        
+                    if cooldown_duration >= 60:
+                        dur_str = f"{cooldown_duration // 60}m"
+                    else:
+                        dur_str = f"{cooldown_duration}s"
+                        
+                    await message.reply(f"chill, you can only use `${command}` once every {dur_str}. Wait **{rem_str}**! 🙄", delete_after=5)
+                    return
+                # Update cooldown timestamp
+                command_cooldown_timestamps[command][user_id] = current_time
+
+            if command == "help":
+                embed = get_help_embed("Landing Page", bot.user)
+                view = HelpView(message.author)
+                await message.reply(embed=embed, view=view)
+                return
+
+            elif command == "afk":
+                reason = args.strip() if args else "AFK"
+                afk_users[user_id] = {
+                    "reason": reason,
+                    "time": current_time,
+                    "name": message.author.display_name
+                }
+                await message.reply(f"i've set your status to AFK: **{reason}**. talk later I guess 🙄")
+                return
+
+            elif command == "ship":
+                user1 = None
+                user2 = None
+                
+                if len(message.mentions) >= 2:
+                    user1 = message.mentions[0]
+                    user2 = message.mentions[1]
+                elif len(message.mentions) == 1:
+                    user1 = message.author
+                    user2 = message.mentions[0]
+                elif args:
+                    text = args.strip()
+                    delimiters = [" x ", " and ", " & ", "  "]
+                    parts = None
+                    for delim in delimiters:
+                        if delim in text.lower():
+                            parts = text.lower().split(delim, 1)
+                            break
+                    if not parts:
+                        temp_parts = text.split(None, 1)
+                        if len(temp_parts) == 2:
+                            parts = temp_parts
+                            
+                    if parts and len(parts) == 2:
+                        name1, name2 = parts[0].strip().lower(), parts[1].strip().lower()
+                        if message.guild:
+                            for m in message.guild.members:
+                                if not user1 and (name1 in m.display_name.lower() or name1 in m.name.lower()):
+                                    user1 = m
+                                elif not user2 and (name2 in m.display_name.lower() or name2 in m.name.lower()):
+                                    user2 = m
+                                if user1 and user2:
+                                    break
+                                    
+                    # Fallback if two names couldn't be parsed/found: treat entire args as single target user2, and author as user1
+                    if not (user1 and user2):
+                        user1 = message.author
+                        target_name = args.strip().lower()
+                        if message.guild:
+                            for m in message.guild.members:
+                                if target_name in m.display_name.lower() or target_name in m.name.lower():
+                                    user2 = m
+                                    break
+                
+                # Final fallbacks
+                if not user1:
+                    user1 = message.author
+                    
+                if not user2:
+                    if message.guild:
+                        candidates = [m for m in message.guild.members if not m.bot and m.id != user1.id]
+                        if candidates:
+                            user2 = random.choice(candidates)
+                            
+                if not user2:
+                    await message.reply("you need to mention someone or run this in a server with members, dummy 🙄")
+                    return
+                
+                async with message.channel.typing():
+                    try:
+                        percent = random.randint(0, 100)
+
+                        # Fetch avatars
+                        async with aiohttp.ClientSession() as session:
+                            async with session.get(user1.display_avatar.with_format("png").url) as r1:
+                                pfp1_data = await r1.read()
+                            async with session.get(user2.display_avatar.with_format("png").url) as r2:
+                                pfp2_data = await r2.read()
+                        
+                        img1 = Image.open(io.BytesIO(pfp1_data)).convert("RGBA").resize((200, 200))
+                        img2 = Image.open(io.BytesIO(pfp2_data)).convert("RGBA").resize((200, 200))
+                        
+                        # Circular crop helper
+                        def make_circular(img):
+                            from PIL import ImageDraw
+                            mask = Image.new("L", img.size, 0)
+                            draw_mask = ImageDraw.Draw(mask)
+                            draw_mask.ellipse((0, 0) + img.size, fill=255)
+                            output = Image.new("RGBA", img.size, (0, 0, 0, 0))
+                            output.paste(img, (0, 0), mask=mask)
+                            return output
+                            
+                        circ1 = make_circular(img1)
+                        circ2 = make_circular(img2)
+                        
+                        # Generate premium dark gradient background
+                        from PIL import ImageDraw
+                        base = Image.new("RGBA", (700, 350))
+                        draw = ImageDraw.Draw(base)
+                        for y_pos in range(350):
+                            r_col = int(26 + (36 - 26) * (y_pos / 350))
+                            g_col = int(26 + (36 - 26) * (y_pos / 350))
+                            b_col = int(31 + (41 - 31) * (y_pos / 350))
+                            draw.line([(0, y_pos), (700, y_pos)], fill=(r_col, g_col, b_col, 255))
+                            
+                        # Paste circular avatars
+                        base.paste(circ1, (80, 75), circ1)
+                        base.paste(circ2, (420, 75), circ2)
+                        
+                        # Draw thin circular borders around avatars
+                        draw.ellipse([80, 75, 280, 275], outline=(150, 150, 150, 255), width=2)
+                        draw.ellipse([420, 75, 620, 275], outline=(150, 150, 150, 255), width=2)
+                        
+                        # Draw filled progress heart in the center (overlapping the avatars)
+                        heart_img = draw_ship_heart(
+                            size=220,
+                            percent=percent,
+                            bg_color=(40, 40, 40, 200),
+                            fill_color=(230, 40, 40, 255),
+                            border_color=(10, 10, 10, 255),
+                            border_width=4
+                        )
+                        base.paste(heart_img, (240, 65), heart_img)
+                        
+                        # Save resulting image to bytes
+                        out_io = io.BytesIO()
+                        base.save(out_io, format="PNG")
+                        out_io.seek(0)
+                        
+                        # Determine comment based on compatibility score
+                        if percent == 100:
+                            comment = "absolute perfection. marry already 💍"
+                        elif percent >= 80:
+                            comment = "pure cuties, i ship it! 💕"
+                        elif percent >= 50:
+                            comment = "not bad, there's definitely a spark here 👀"
+                        elif percent >= 20:
+                            comment = "eh... maybe as friends? 💀"
+                        else:
+                            comment = "absolutely zero chemistry. touch grass 😭"
+                            
+                        embed = discord.Embed(
+                            title="💖 REZE COFFEE HOUSE MATCHMAKER 💖",
+                            description=f"**{user1.display_name}** x **{user2.display_name}** compatibility is **{percent}%**!\n*{comment}*",
+                            color=discord.Color.from_rgb(255, 105, 180)
+                        )
+                        file = discord.File(out_io, filename="ship.png")
+                        embed.set_image(url="attachment://ship.png")
+                        await message.reply(file=file, embed=embed)
+                    except Exception as err:
+                        logger.error(f"Ship command failed: {err}")
+                        await message.reply("something went wrong while generating the ship image 😭")
+                return
+
+            elif command in ["anime", "manga"]:
+                is_manga = command == "manga"
+                api_type = "manga" if is_manga else "anime"
+                
+                if not args:
+                    await message.reply(f"you need to provide a search query, dummy 🙄 (e.g., ${command} {'chainsaw man' if is_manga else 'naruto'})")
+                    return
+                
+                query = args.strip()
+                async with message.channel.typing():
+                    try:
+                        query_str = """
+                        query ($search: String, $type: MediaType) {
+                          Page (page: 1, perPage: 1) {
+                            media (search: $search, type: $type) {
+                              id
+                              title {
+                                romaji
+                                english
+                                native
+                              }
+                              siteUrl
+                              description
+                              averageScore
+                              status
+                              format
+                              episodes
+                              chapters
+                              volumes
+                              genres
+                              coverImage {
+                                large
+                              }
+                              staff {
+                                edges {
+                                  role
+                                  node {
+                                    name {
+                                      full
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                        """
+                        url = "https://graphql.anilist.co"
+                        payload = {
+                            "query": query_str,
+                            "variables": {
+                                "search": query,
+                                "type": "MANGA" if is_manga else "ANIME"
+                            }
+                        }
+                        
+                        async with aiohttp.ClientSession() as session:
+                            async with session.post(url, json=payload) as resp:
+                                if resp.status == 200:
+                                    res_data = await resp.json()
+                                    media_list = res_data.get("data", {}).get("Page", {}).get("media", [])
+                                    if not media_list:
+                                        await message.reply(f"couldn't find any {api_type} named **{query}** 😭")
+                                        return
+                                    
+                                    data = media_list[0]
+                                    title = data.get("title", {}).get("english") or data.get("title", {}).get("romaji") or data.get("title", {}).get("native") or "Unknown"
+                                    site_url = data.get("siteUrl", "")
+                                    
+                                    # Strip HTML tags from description
+                                    description_raw = data.get("description", "No synopsis available.")
+                                    clean_desc = re.sub(r'<[^>]*>', '', description_raw) if description_raw else "No synopsis available."
+                                    if clean_desc and len(clean_desc) > 400:
+                                        clean_desc = clean_desc[:397] + "..."
+                                        
+                                    avg_score = data.get("averageScore")
+                                    score = f"{avg_score / 10:.1f}" if avg_score is not None else "N/A"
+                                    
+                                    status_map = {
+                                        "FINISHED": "Finished Airing" if not is_manga else "Finished Publishing",
+                                        "RELEASING": "Currently Airing" if not is_manga else "Publishing",
+                                        "NOT_YET_RELEASED": "Not Yet Released",
+                                        "CANCELLED": "Cancelled",
+                                        "HIATUS": "Hiatus"
+                                    }
+                                    status = status_map.get(data.get("status", ""), "N/A")
+                                    
+                                    # Format Type/Format
+                                    raw_format = data.get("format", "N/A")
+                                    media_format = raw_format.replace("_", " ").title() if raw_format else "N/A"
+                                    
+                                    if is_manga:
+                                        chapters = data.get("chapters")
+                                        volumes = data.get("volumes")
+                                        is_publishing = data.get("status") == "RELEASING"
+                                        
+                                        chap_str = chapters if chapters is not None else ("Ongoing" if is_publishing else "N/A")
+                                        vol_str = volumes if volumes is not None else ("Ongoing" if is_publishing else "N/A")
+                                        info_str = f"📚 Chapters: **{chap_str}** | Volumes: **{vol_str}**"
+                                    else:
+                                        episodes = data.get("episodes") or "N/A"
+                                        info_str = f"📺 Episodes: **{episodes}**"
+                                        
+                                    genres = ", ".join(data.get("genres", [])) or "N/A"
+                                    img_url = data.get("coverImage", {}).get("large")
+                                    
+                                    embed = discord.Embed(
+                                        title=f"🌸 {title} 🌸",
+                                        url=site_url,
+                                        description=clean_desc,
+                                        color=discord.Color.from_rgb(255, 182, 193)
+                                    )
+                                    if img_url:
+                                        embed.set_thumbnail(url=img_url)
+                                        
+                                    embed.add_field(name="Rating/Score", value=f"⭐ **{score}**", inline=True)
+                                    embed.add_field(name="Status", value=status, inline=True)
+                                    embed.add_field(name="Type/Format", value=media_format, inline=True)
+                                    embed.add_field(name="Details", value=info_str, inline=True)
+                                    
+                                    if is_manga:
+                                        authors_list = []
+                                        staff_edges = data.get("staff", {}).get("edges", [])
+                                        for edge in staff_edges:
+                                            role = edge.get("role", "").lower()
+                                            if any(r in role for r in ["story", "art", "original creator", "writer"]):
+                                                name = edge.get("node", {}).get("name", {}).get("full")
+                                                if name and name not in authors_list:
+                                                    authors_list.append(name)
+                                        authors = ", ".join(authors_list) if authors_list else "N/A"
+                                        embed.add_field(name="Author(s)", value=authors, inline=True)
+                                        
+                                    embed.add_field(name="Genres", value=genres, inline=False)
+                                    embed.set_footer(text="AniList | Click title for link")
+                                    
+                                    await message.reply(embed=embed)
+                                else:
+                                    await message.reply("couldn't fetch the details, AniList API is acting up 🙄")
+                    except Exception as e:
+                        logger.error(f"Anime/Manga search failed: {e}")
+                        await message.reply("something went wrong while searching 😭")
+                return
+
+            elif command in ["movie", "show", "series"]:
+                if not args:
+                    await message.reply(f"you need to provide a movie/show title, dummy 🙄 (e.g., ${command} Interstellar)")
+                    return
+                
+                query = args.strip()
+                import urllib.parse
+                async with message.channel.typing():
+                    try:
+                        url = f"https://imdb.iamidiotareyoutoo.com/search?q={urllib.parse.quote(query)}"
+                        async with aiohttp.ClientSession() as session:
+                            async with session.get(url) as resp:
+                                if resp.status == 200:
+                                    res_data = await resp.json()
+                                    if not res_data.get("ok") or not res_data.get("description"):
+                                        await message.reply(f"couldn't find any movie or show named **{query}** 😭")
+                                        return
+                                    
+                                    data = res_data["description"][0]
+                                    title = data.get("#TITLE", "Unknown")
+                                    year = data.get("#YEAR", "N/A")
+                                    actors = data.get("#ACTORS", "N/A")
+                                    imdb_url = data.get("#IMDB_URL", "")
+                                    rank = data.get("#RANK", "N/A")
+                                    poster_url = data.get("#IMG_POSTER", None)
+                                    
+                                    embed = discord.Embed(
+                                        title=f"🎬 {title} ({year}) 🎬",
+                                        url=imdb_url,
+                                        color=discord.Color.from_rgb(212, 175, 230)
+                                    )
+                                    if poster_url:
+                                        embed.set_thumbnail(url=poster_url)
+                                        
+                                    embed.add_field(name="Starring", value=actors, inline=False)
+                                    embed.add_field(name="IMDb Rank", value=f"🏆 #{rank}" if rank != "N/A" else "N/A", inline=True)
+                                    embed.set_footer(text="IMDb | Click title for link")
+                                    
+                                    await message.reply(embed=embed)
+                                else:
+                                    await message.reply("couldn't connect to IMDb search api 🙄")
+                    except Exception as e:
+                        logger.error(f"Movie command failed: {e}")
+                        await message.reply("something went wrong while searching 😭")
+                return
+
+                return
+
+            elif command == "weather":
+                if not args:
+                    await message.reply("you need to provide a city name, dummy 🙄 (e.g., $weather Tokyo)")
+                    return
+                city = args.strip()
+                import urllib.parse
+                async with message.channel.typing():
+                    try:
+                        url = f"https://wttr.in/{urllib.parse.quote(city)}?format=j1"
+                        async with aiohttp.ClientSession() as session:
+                            async with session.get(url) as resp:
+                                if resp.status == 200:
+                                    data = await resp.json()
+                                    current = data["current_condition"][0]
+                                    temp_c = current["temp_C"]
+                                    temp_f = current["temp_F"]
+                                    desc = current["weatherDesc"][0]["value"]
+                                    humidity = current["humidity"]
+                                    wind = current["windspeedKmph"]
+                                    
+                                    area = data.get("nearest_area", [{}])[0]
+                                    region = area.get("region", [{}])[0].get("value", "")
+                                    country = area.get("country", [{}])[0].get("value", "")
+                                    location_name = area.get("areaName", [{}])[0].get("value", city)
+                                    
+                                    full_loc = f"{location_name}"
+                                    if region: full_loc += f", {region}"
+                                    if country: full_loc += f", {country}"
+                                    
+                                    embed = discord.Embed(
+                                        title=f"🌡️ Weather for {full_loc} 🌡️",
+                                        description=f"**{desc}**",
+                                        color=discord.Color.from_rgb(175, 238, 238)
+                                    )
+                                    embed.add_field(name="Temperature", value=f"🌡️ **{temp_c}°C** / **{temp_f}°F**", inline=True)
+                                    embed.add_field(name="Humidity", value=f"💧 **{humidity}%**", inline=True)
+                                    embed.add_field(name="Wind Speed", value=f"💨 **{wind} km/h**", inline=True)
+                                    embed.set_footer(text="Powered by wttr.in")
+                                    await message.reply(embed=embed)
+                                else:
+                                    await message.reply(f"couldn't fetch the weather for **{city}** 😭")
+                    except Exception as e:
+                        logger.error(f"Weather command failed: {e}")
+                        await message.reply("something went wrong while fetching weather details 😭")
+                return
+
+            elif command == "poll":
+                if not args:
+                    await message.reply("usage: `$poll question | option1 | option2 | ...`, dummy 🙄")
+                    return
+                
+                parts = [p.strip() for p in args.split("|")]
+                if len(parts) < 2:
+                    await message.reply("you need to provide a question and at least one option! 🙄")
+                    return
+                
+                question = parts[0]
+                options = parts[1:]
+                
+                if len(options) > 10:
+                    await message.reply("keep it to 10 options or less, I don't have all day 🙄")
+                    return
+                
+                poll_emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+                
+                embed = discord.Embed(
+                    title=f"📊 {question}",
+                    color=discord.Color.from_rgb(212, 175, 230)
+                )
+                
+                option_lines = []
+                for idx, opt in enumerate(options):
+                    option_lines.append(f"{poll_emojis[idx]} {opt}")
+                    
+                embed.description = "\n".join(option_lines)
+                embed.set_footer(text=f"Poll by {message.author.display_name}")
+                
+                poll_msg = await message.channel.send(embed=embed)
+                for idx in range(len(options)):
+                    await poll_msg.add_reaction(poll_emojis[idx])
+                return
+
+            elif command == "confess":
+                is_dm = isinstance(message.channel, discord.DMChannel)
+                if not is_dm:
+                    try:
+                        await message.delete()
+                    except:
+                        pass
+                    await message.channel.send(f"{message.author.mention} confessions should be sent in my DMs so they stay actually anonymous! 🙄", delete_after=5)
+                    return
+                
+                if not args:
+                    await message.reply("you need to provide a confession text, dummy 🙄")
+                    return
+                
+                confession_text = args.strip()
+                success = False
+                for guild in bot.guilds:
+                    member = guild.get_member(message.author.id)
+                    if member:
+                        conf_channel = None
+                        g_cfg = await get_guild_config(guild.id)
+                        confession_channel_id = g_cfg.get("confession_channel_id")
+                        if confession_channel_id:
+                            conf_channel = guild.get_channel(int(confession_channel_id))
+                            
+                        if not conf_channel:
+                            for channel in guild.text_channels:
+                                if "confess" in channel.name.lower():
+                                    conf_channel = channel
+                                    break
+                                    
+                        if conf_channel:
+                            embed = discord.Embed(
+                                title="🤫 Anonymous Confession 🤫",
+                                description=confession_text,
+                                color=discord.Color.from_rgb(255, 105, 180)
+                            )
+                            embed.set_footer(text="DM me $confess to submit yours!")
+                            await conf_channel.send(embed=embed)
+                            success = True
+                
+                if success:
+                    await message.reply("your confession has been posted anonymously! 🤫")
+                else:
+                    await message.reply("couldn't find any server with a confessions channel that we both share 😭")
+                return
+
+            elif command == "choose":
+                if not args:
+                    await message.reply("choose what? give me some options separated by `|` or commas! 🙄")
+                    return
+                
+                delims = ["|", ",", " or "]
+                options = None
+                for d in delims:
+                    if d in args:
+                        options = [o.strip() for o in args.split(d) if o.strip()]
+                        break
+                if not options:
+                    options = [o.strip() for o in args.split() if o.strip()]
+                    
+                if len(options) < 2:
+                    await message.reply("give me at least two choices, dummy 🙄")
+                    return
+                
+                choice = random.choice(options)
+                comments = [
+                    f"obviously **{choice}**. next question? 💅",
+                    f"i choose **{choice}**. don't regret it later lol 🙄",
+                    f"easy: **{choice}**. you knew this already 💀",
+                    f"definitely **{choice}**.",
+                    f"let's go with **{choice}**, why not? 👀"
+                ]
+                await message.reply(random.choice(comments))
+                return
+
+            elif command in ["waifu", "husbando"]:
+                async with message.channel.typing():
+                    try:
+                        url = f"https://nekos.best/api/v2/{command}"
+                        async with aiohttp.ClientSession() as session:
+                            async with session.get(url) as resp:
+                                if resp.status == 200:
+                                    res_data = await resp.json()
+                                    item = res_data["results"][0]
+                                    img_url = item["url"]
+                                    char_name = item.get("character_name", "Unknown Character")
+                                    
+                                    embed = discord.Embed(
+                                        title=f"🌸 Your random {command} 🌸",
+                                        description=f"Meet **{char_name}**!",
+                                        color=discord.Color.from_rgb(255, 182, 193)
+                                    )
+                                    embed.set_image(url=img_url)
+                                    embed.set_footer(text="Powered by nekos.best | Reze bot")
+                                    await message.reply(embed=embed)
+                                else:
+                                    await message.reply(f"couldn't fetch any {command} right now 😭")
+                    except Exception as e:
+                        logger.error(f"Waifu/Husbando command failed: {e}")
+                        await message.reply("something went wrong while fetching 😭")
+                return
+
+            elif command == "quote":
+                async with message.channel.typing():
+                    try:
+                        url = "https://api.animechan.io/v1/quotes/random"
+                        async with aiohttp.ClientSession() as session:
+                            async with session.get(url) as resp:
+                                if resp.status == 200:
+                                    res_data = await resp.json()
+                                    if res_data.get("status") == "success" and "data" in res_data:
+                                        quote_data = res_data["data"]
+                                        content = quote_data["content"]
+                                        anime_name = quote_data["anime"]["name"]
+                                        char_name = quote_data["character"]["name"]
+                                        
+                                        embed = discord.Embed(
+                                            description=f"*\"{content}\"*",
+                                            color=discord.Color.from_rgb(212, 175, 230)
+                                        )
+                                        embed.set_footer(text=f"— {char_name} ({anime_name})")
+                                        await message.reply(embed=embed)
+                                    else:
+                                        await message.reply("couldn't fetch an anime quote right now 😭")
+                                else:
+                                    await message.reply("anime quote api is down or rate-limited 🙄")
+                    except Exception as e:
+                        logger.error(f"Quote command failed: {e}")
+                        await message.reply("something went wrong while fetching a quote 😭")
+                return
+
+            elif command in ["cat", "dog"]:
+                async with message.channel.typing():
+                    try:
+                        if command == "cat":
+                            url = "https://api.thecatapi.com/v1/images/search"
+                        else:
+                            url = "https://dog.ceo/api/breeds/image/random"
+                            
+                        async with aiohttp.ClientSession() as session:
+                            async with session.get(url) as resp:
+                                if resp.status == 200:
+                                    res_data = await resp.json()
+                                    if command == "cat":
+                                        img_url = res_data[0]["url"]
+                                    else:
+                                        img_url = res_data["message"]
+                                        
+                                    embed = discord.Embed(
+                                        title=f"🌸 Random cute {command}! 🌸",
+                                        color=discord.Color.from_rgb(255, 223, 186)
+                                    )
+                                    embed.set_image(url=img_url)
+                                    embed.set_footer(text=f"A wild {command} appeared!")
+                                    await message.reply(embed=embed)
+                                else:
+                                    await message.reply(f"couldn't fetch a {command} image 😭")
+                    except Exception as e:
+                        logger.error(f"Cat/Dog command failed: {e}")
+                        await message.reply("something went wrong while fetching 😭")
+                return
+
+            # --- E-FAMILY COMMANDS ---
+            elif command == "marry":
+                if not message.mentions:
+                    await message.reply("you need to mention who you want to marry, dummy 🙄\nUsage: `$marry [@user]`")
+                    return
+                target = message.mentions[0]
+                if target.id == message.author.id:
+                    await message.reply("you can't marry yourself, dummy! 🙄")
+                    return
+                if target.bot:
+                    await message.reply("you can't marry a bot! i don't have feelings like that 🙄")
+                    return
+                
+                author_id_str = str(message.author.id)
+                target_id_str = str(target.id)
+                
+                author_fam = await db.get_family(author_id_str)
+                target_fam = await db.get_family(target_id_str)
+                
+                if author_fam.get("spouse"):
+                    current_spouse = await get_user_name(author_fam["spouse"], bot)
+                    await message.reply(f"you are already married to **{current_spouse}**! Divorce them first! 🙄")
+                    return
+                if target_fam.get("spouse"):
+                    current_spouse = await get_user_name(target_fam["spouse"], bot)
+                    await message.reply(f"**{target.display_name}** is already married to **{current_spouse}**! 🙄")
+                    return
+                
+                if target_id_str in author_fam.get("children", []):
+                    await message.reply("you can't marry your own child! That's weird! 🙄")
+                    return
+                if target_id_str in author_fam.get("parents", []):
+                    await message.reply("you can't marry your own parent! That's weird! 🙄")
+                    return
+                shared_parents = set(author_fam.get("parents", [])).intersection(set(target_fam.get("parents", [])))
+                if shared_parents:
+                    await message.reply("you can't marry your sibling! That's weird! 🙄")
+                    return
+
+                embed = discord.Embed(
+                    title="💍 Marriage Proposal 💍",
+                    description=f"{target.mention}, **{message.author.display_name}** has proposed to you! Do you accept? 💖",
+                    color=discord.Color.from_rgb(255, 182, 193)
+                )
+                view = ProposalView(message.author, target, "marry")
+                proposal_msg = await message.reply(embed=embed, view=view)
+                
+                await view.wait()
+                if view.accepted:
+                    author_fam = await db.get_family(author_id_str)
+                    target_fam = await db.get_family(target_id_str)
+                    
+                    if author_fam.get("spouse") or target_fam.get("spouse"):
+                        await proposal_msg.edit(content="💔 Marriage proposal failed: one of you got married in the meantime! 🙄", embed=None, view=None)
+                        return
+                        
+                    author_fam["spouse"] = target_id_str
+                    target_fam["spouse"] = author_id_str
+                    await db.save_family(author_fam)
+                    await db.save_family(target_fam)
+                    
+                    success_embed = discord.Embed(
+                        title="🍾 Just Married! 🎉",
+                        description=f"💖 **{target.display_name}** accepted **{message.author.display_name}**'s proposal! Congratulations! 💖",
+                        color=discord.Color.from_rgb(255, 105, 180)
+                    )
+                    await proposal_msg.edit(embed=success_embed, view=None)
+                else:
+                    decline_embed = discord.Embed(
+                        title="💔 Proposal Declined 💔",
+                        description=f"**{target.display_name}** declined **{message.author.display_name}**'s proposal. Ouch...",
+                        color=discord.Color.from_rgb(255, 105, 97)
+                    )
+                    await proposal_msg.edit(embed=decline_embed, view=None)
+                return
+
+            elif command == "adopt":
+                if not message.mentions:
+                    await message.reply("you need to mention who you want to adopt, dummy 🙄\nUsage: `$adopt [@user]`")
+                    return
+                target = message.mentions[0]
+                if target.id == message.author.id:
+                    await message.reply("you can't adopt yourself, dummy! 🙄")
+                    return
+                if target.bot:
+                    await message.reply("you can't adopt a bot! 🙄")
+                    return
+                
+                author_id_str = str(message.author.id)
+                target_id_str = str(target.id)
+                
+                author_fam = await db.get_family(author_id_str)
+                target_fam = await db.get_family(target_id_str)
+                
+                if target_id_str in author_fam.get("children", []):
+                    await message.reply(f"**{target.display_name}** is already your child, dummy 🙄")
+                    return
+                if target_id_str in author_fam.get("parents", []):
+                    await message.reply("they are your parent! You can't adopt your parent, dummy 🙄")
+                    return
+                if author_fam.get("spouse") == target_id_str:
+                    await message.reply("you can't adopt your spouse, dummy 🙄")
+                    return
+                if len(target_fam.get("parents", [])) >= 2:
+                    await message.reply(f"**{target.display_name}** already has 2 parents! They can't be adopted again. 🙄")
+                    return
+                
+                if await is_ancestor(author_id_str, target_id_str):
+                    await message.reply(f"you cannot adopt **{target.display_name}** because they are your ancestor! 🙄")
+                    return
+                if await is_ancestor(target_id_str, author_id_str):
+                    await message.reply(f"**{target.display_name}** is already your descendant, dummy! 🙄")
+                    return
+
+                embed = discord.Embed(
+                    title="👶 Adoption Request 👶",
+                    description=f"{target.mention}, **{message.author.display_name}** wants to adopt you! Do you accept? 🍼",
+                    color=discord.Color.from_rgb(173, 216, 230)
+                )
+                view = ProposalView(message.author, target, "adopt")
+                proposal_msg = await message.reply(embed=embed, view=view)
+                
+                await view.wait()
+                if view.accepted:
+                    author_fam = await db.get_family(author_id_str)
+                    target_fam = await db.get_family(target_id_str)
+                    
+                    if len(target_fam.get("parents", [])) >= 2:
+                        await proposal_msg.edit(content=f"💔 Adoption failed: **{target.display_name}** reached the maximum number of parents in the meantime! 🙄", embed=None, view=None)
+                        return
+                    
+                    if target_id_str not in author_fam["children"]:
+                        author_fam["children"].append(target_id_str)
+                    if author_id_str not in target_fam["parents"]:
+                        target_fam["parents"].append(author_id_str)
+                        
+                    await db.save_family(author_fam)
+                    await db.save_family(target_fam)
+                    
+                    success_embed = discord.Embed(
+                        title="🎉 Adoption Finalized! 🍼",
+                        description=f"✨ **{message.author.display_name}** has adopted **{target.display_name}**! Welcome to the family! ✨",
+                        color=discord.Color.from_rgb(144, 238, 144)
+                    )
+                    await proposal_msg.edit(embed=success_embed, view=None)
+                else:
+                    decline_embed = discord.Embed(
+                        title="❌ Adoption Declined 💔",
+                        description=f"**{target.display_name}** declined **{message.author.display_name}**'s adoption request.",
+                        color=discord.Color.from_rgb(255, 105, 97)
+                    )
+                    await proposal_msg.edit(embed=decline_embed, view=None)
+                return
+
+            elif command == "divorce":
+                author_id_str = str(message.author.id)
+                author_fam = await db.get_family(author_id_str)
+                spouse_id = author_fam.get("spouse")
+                
+                if not spouse_id:
+                    await message.reply("you are not married, dummy! 🙄")
+                    return
+                
+                spouse_name = await get_user_name(spouse_id, bot)
+                spouse_fam = await db.get_family(spouse_id)
+                
+                author_fam["spouse"] = None
+                spouse_fam["spouse"] = None
+                
+                await db.save_family(author_fam)
+                await db.save_family(spouse_fam)
+                
+                embed = discord.Embed(
+                    title="💔 Divorced 💔",
+                    description=f"**{message.author.display_name}** has divorced **{spouse_name}**. It's officially over...",
+                    color=discord.Color.from_rgb(255, 105, 97)
+                )
+                await message.reply(embed=embed)
+                return
+
+            elif command == "disown":
+                if not message.mentions:
+                    await message.reply("you need to mention who you want to disown, dummy 🙄\nUsage: `$disown [@user]`")
+                    return
+                target = message.mentions[0]
+                author_id_str = str(message.author.id)
+                target_id_str = str(target.id)
+                
+                author_fam = await db.get_family(author_id_str)
+                if target_id_str not in author_fam.get("children", []):
+                    await message.reply(f"**{target.display_name}** is not your child, dummy! 🙄")
+                    return
+                
+                author_fam["children"].remove(target_id_str)
+                target_fam = await db.get_family(target_id_str)
+                if author_id_str in target_fam.get("parents", []):
+                    target_fam["parents"].remove(author_id_str)
+                    
+                await db.save_family(author_fam)
+                await db.save_family(target_fam)
+                
+                embed = discord.Embed(
+                    title="🛑 Disowned 😤",
+                    description=f"**{message.author.display_name}** has disowned **{target.display_name}**! They are no longer your child.",
+                    color=discord.Color.from_rgb(255, 69, 0)
+                )
+                await message.reply(embed=embed)
+                return
+
+            elif command == "abandon":
+                if not message.mentions:
+                    await message.reply("you need to mention which parent you want to abandon, dummy 🙄\nUsage: `$abandon [@user]`")
+                    return
+                target = message.mentions[0]
+                author_id_str = str(message.author.id)
+                target_id_str = str(target.id)
+                
+                author_fam = await db.get_family(author_id_str)
+                if target_id_str not in author_fam.get("parents", []):
+                    await message.reply(f"**{target.display_name}** is not your parent, dummy! 🙄")
+                    return
+                
+                author_fam["parents"].remove(target_id_str)
+                target_fam = await db.get_family(target_id_str)
+                if author_id_str in target_fam.get("children", []):
+                    target_fam["children"].remove(author_id_str)
+                    
+                await db.save_family(author_fam)
+                await db.save_family(target_fam)
+                
+                embed = discord.Embed(
+                    title="🏃 Parent Abandoned ✌️",
+                    description=f"**{message.author.display_name}** has abandoned their parent **{target.display_name}**!",
+                    color=discord.Color.from_rgb(255, 69, 0)
+                )
+                await message.reply(embed=embed)
+                return
+
+            elif command == "runaway":
+                author_id_str = str(message.author.id)
+                author_fam = await db.get_family(author_id_str)
+                parent_ids = author_fam.get("parents", [])
+                
+                if not parent_ids:
+                    await message.reply("you don't even have any parents to run away from, dummy! 🙄")
+                    return
+                
+                # Fetch and remove from all parents
+                for p_id in parent_ids:
+                    parent_fam = await db.get_family(p_id)
+                    if author_id_str in parent_fam.get("children", []):
+                        parent_fam["children"].remove(author_id_str)
+                    await db.save_family(parent_fam)
+                
+                author_fam["parents"] = []
+                await db.save_family(author_fam)
+                
+                embed = discord.Embed(
+                    title="✨ Runaway! 🎒",
+                    description=f"🏃 **{message.author.display_name}** has run away from home and is now independent! ✌️",
+                    color=discord.Color.from_rgb(255, 69, 0)
+                )
+                await message.reply(embed=embed)
+                return
+
+            elif command == "disownall":
+                author_id_str = str(message.author.id)
+                author_fam = await db.get_family(author_id_str)
+                children_ids = author_fam.get("children", [])
+                
+                if not children_ids:
+                    await message.reply("you don't even have any children to disown, dummy! 🙄")
+                    return
+                
+                # Fetch and remove from all children
+                for c_id in children_ids:
+                    child_fam = await db.get_family(c_id)
+                    if author_id_str in child_fam.get("parents", []):
+                        child_fam["parents"].remove(author_id_str)
+                    await db.save_family(child_fam)
+                
+                author_fam["children"] = []
+                await db.save_family(author_fam)
+                
+                embed = discord.Embed(
+                    title="💔 Disowned All Children 🛑",
+                    description=f"😤 **{message.author.display_name}** has disowned all of their children! They are officially childless now.",
+                    color=discord.Color.from_rgb(255, 69, 0)
+                )
+                await message.reply(embed=embed)
+                return
+
+            elif command == "family":
+                target = message.mentions[0] if message.mentions else message.author
+                target_id_str = str(target.id)
+                
+                async with message.channel.typing():
+                    try:
+                        target_fam = await db.get_family(target_id_str)
+                        spouse_id = target_fam.get("spouse")
+                        spouse_name = await get_guild_member_name(message.guild, spouse_id, bot) if spouse_id else "None"
+                        
+                        parent_ids = target_fam.get("parents", [])
+                        parents_names = []
+                        for p_id in parent_ids:
+                            p_name = await get_guild_member_name(message.guild, p_id, bot)
+                            parents_names.append(p_name)
+                        parents_str = ", ".join(parents_names) if parents_names else "None"
+                        
+                        sibling_ids = set()
+                        for p_id in parent_ids:
+                            p_fam = await db.get_family(p_id)
+                            for sib_id in p_fam.get("children", []):
+                                if sib_id != target_id_str:
+                                    sibling_ids.add(sib_id)
+                        siblings_names = []
+                        for sib_id in sibling_ids:
+                            sib_name = await get_guild_member_name(message.guild, sib_id, bot)
+                            siblings_names.append(sib_name)
+                        siblings_str = ", ".join(siblings_names) if siblings_names else "None"
+                        
+                        children_ids = target_fam.get("children", [])
+                        children_names = []
+                        grandchildren_names = []
+                        for c_id in children_ids:
+                            c_name = await get_guild_member_name(message.guild, c_id, bot)
+                            children_names.append(c_name)
+                            c_fam = await db.get_family(c_id)
+                            for gc_id in c_fam.get("children", []):
+                                gc_name = await get_guild_member_name(message.guild, gc_id, bot)
+                                grandchildren_names.append(gc_name)
+                        children_str = ", ".join(children_names) if children_names else "None"
+                        grandchildren_str = ", ".join(grandchildren_names) if grandchildren_names else "None"
+
+                        img_bytes = await generate_family_tree_image(target_id_str, message.guild, bot)
+                        output_buffer = io.BytesIO(img_bytes)
+                        file = discord.File(fp=output_buffer, filename="family_tree.png")
+                        
+                        embed = discord.Embed(
+                            title=f"👪 Family of {target.display_name}",
+                            color=discord.Color.from_rgb(46, 139, 87)
+                        )
+                        embed.add_field(name="💍 Married to", value=spouse_name, inline=True)
+                        embed.add_field(name="👨‍👩‍👦 Parents", value=parents_str, inline=True)
+                        embed.add_field(name="👦👧 Siblings", value=siblings_str, inline=True)
+                        embed.add_field(name="👶 Children", value=children_str, inline=True)
+                        if grandchildren_names:
+                            embed.add_field(name="🍼 Grandchildren", value=grandchildren_str, inline=True)
+                        
+                        embed.set_image(url="attachment://family_tree.png")
+                        await message.reply(file=file, embed=embed)
+                    except Exception as e:
+                        logger.error(f"Failed to generate family tree image: {e}")
+                        await message.reply("something went wrong while drawing your family tree 😭")
+                return
+
+            elif command == "ping":
+                latency = round(bot.latency * 1000)
+                await message.reply(f"pong! 🏓 Latency is **{latency}ms**.")
+                return
+
+            elif command == "uptime":
+                duration = current_time - bot_config.start_time
+                m, s = divmod(int(duration), 60)
+                h, m = divmod(m, 60)
+                d, h = divmod(h, 24)
+                
+                uptime_str = f"{s}s"
+                if m > 0: uptime_str = f"{m}m {uptime_str}"
+                if h > 0: uptime_str = f"{h}h {uptime_str}"
+                if d > 0: uptime_str = f"{d}d {uptime_str}"
+                
+                await message.reply(f"i've been awake for **{uptime_str}**. too long if you ask me 🙄")
+                return
+
+            elif command in ["avatar", "av"]:
+                target = message.mentions[0] if message.mentions else message.author
+                embed = discord.Embed(
+                    title=f"🌸 {target.display_name}'s Avatar 🌸",
+                    color=discord.Color.from_rgb(212, 175, 230)
+                )
+                if target.avatar:
+                    embed.set_image(url=target.avatar.url)
+                    await message.reply(embed=embed)
+                else:
+                    await message.reply("they don't even have a custom avatar lol 💀")
+                return
+
+            elif command in ["server", "serverinfo"]:
+                if not message.guild:
+                    await message.reply("this command only works in servers, duh 🙄")
+                    return
+                
+                guild = message.guild
+                embed = discord.Embed(
+                    title=f"🏛️ {guild.name} Info 🏛️",
+                    color=discord.Color.from_rgb(212, 175, 230)
+                )
+                if guild.icon:
+                    embed.set_thumbnail(url=guild.icon.url)
+                
+                embed.add_field(name="Owner", value=f"<@{guild.owner_id}>", inline=True)
+                embed.add_field(name="Members", value=str(guild.member_count), inline=True)
+                embed.add_field(name="Created At", value=guild.created_at.strftime("%d %B %Y"), inline=True)
+                embed.add_field(name="Roles Count", value=str(len(guild.roles)), inline=True)
+                embed.add_field(name="Emoji Count", value=str(len(guild.emojis)), inline=True)
+                
+                await message.reply(embed=embed)
+                return
+
+            elif command in ACTIONS or command == "random":
+                action = command
+                if command == "random":
+                    action = random.choice(ACTIONS)
+
+                # Determine target string
+                target_str = ""
+                if message.mentions:
+                    target_str = message.mentions[0].display_name
+                elif args:
+                    target_str = args.strip()
+
+                # Action description grammar
+                if target_str:
+                    verb = random.choice(ACTION_VERBS[action])
+                    if "{target}" in verb:
+                        description = f"**{message.author.display_name}** " + verb.format(target=f"**{target_str}**")
+                    else:
+                        description = f"**{message.author.display_name}** {verb} **{target_str}**!"
+                else:
+                    description = f"**{message.author.display_name}** " + random.choice(ACTION_SOLO[action])
+
+                if command == "random":
+                    description += f" *(Random: {action})*"
+
+                # Fetch action GIF from nekos.best
+                async with aiohttp.ClientSession() as session:
+                    try:
+                        async with session.get(f"https://nekos.best/api/v2/{action}", timeout=10) as resp:
+                            if resp.status == 200:
+                                data = await resp.json()
+                                gif_url = data["results"][0]["url"]
+                                anime_name = data["results"][0]["anime_name"]
+                                
+                                embed = discord.Embed(
+                                    description=description,
+                                    color=discord.Color.from_rgb(224, 187, 228) # Sweet light lavender
+                                )
+                                embed.set_image(url=gif_url)
+                                embed.set_footer(text="Reze bot made by texture (syfmyorii)")
+                                await message.channel.send(embed=embed)
+                            else:
+                                await message.reply(f"couldn't fetch the gif... nekos.best returned {resp.status} 😭")
+                    except Exception as e:
+                        logger.error(f"Error fetching action GIF: {e}")
+                        await message.reply("nekos.best api is acting up, try again later or smth 🙄")
+                return
+            else:
+                await message.reply("huh? what command is that... type $help or get out 🙄")
+                return
 
     is_dm = isinstance(message.channel, discord.DMChannel)
     ALLOWED_DM_USER_ID = 1276870533811540031
@@ -359,6 +2918,48 @@ async def on_message(message):
             isinstance(message.reference.resolved, discord.Message) and 
             message.reference.resolved.author == bot.user
         )
+        
+        if is_reply_to_bot:
+            ref_msg = message.reference.resolved
+            # 1. Embeds or components are always command outputs (e.g. ship, family, help, confessions)
+            if ref_msg.embeds or ref_msg.components:
+                is_reply_to_bot = False
+            else:
+                is_cmd_output = False
+                # 2. Check if the bot message was replying to a prefix command (starts with $)
+                if ref_msg.reference and ref_msg.reference.message_id:
+                    try:
+                        orig_msg = ref_msg.reference.resolved
+                        if orig_msg is None:
+                            orig_msg = await message.channel.fetch_message(ref_msg.reference.message_id)
+                        if isinstance(orig_msg, discord.Message):
+                            if orig_msg.content.strip().startswith('$'):
+                                is_cmd_output = True
+                    except Exception:
+                        pass
+                
+                # 3. Fallback to command indicator keywords
+                if not is_cmd_output:
+                    content_lower = ref_msg.content.lower()
+                    command_indicators = [
+                        "pong!", "i've been awake for", "i've set your status to afk", 
+                        "wb ", "is currently afk:", "done.", "config reset", 
+                        "your confession has been posted", "proposal accepted", "proposal declined",
+                        "chill, stop spamming", "chill, you can only use", "you need to mention",
+                        "you can't marry", "you are already married", "you can't adopt",
+                        "they are your parent", "you are not married", "is not your child",
+                        "is not your parent", "something went wrong", "i choose ",
+                        "obviously ", "no, reze is still online", "talk later i guess",
+                        "this proposal isn't for you", "just married", "adoption finalized",
+                        "divorced", "disowned", "parent abandoned", "huh? what command is that",
+                        "couldn't fetch", "failed to generate", "api is acting up",
+                        "couldn't find any server"
+                    ]
+                    if any(ind in content_lower for ind in command_indicators):
+                        is_cmd_output = True
+                
+                if is_cmd_output:
+                    is_reply_to_bot = False
 
         # Name-trigger Logic — respond if someone says "reze" (even without pinging)
         name_triggered = False
@@ -624,6 +3225,15 @@ async def on_message(message):
                 if gender_age_roles:
                     user_context += f", Server Gender/Age Roles: {', '.join(gender_age_roles)}"
 
+            # --- AFK Awareness ---
+            if message.guild:
+                afk_list = []
+                for member in message.guild.members:
+                    if member.id in afk_users:
+                        afk_list.append(f"{member.display_name} (reason: {afk_users[member.id]['reason']})")
+                if afk_list:
+                    user_context += f", AFK Users in Server: {', '.join(afk_list)}"
+
             # --- ADMIN MODERATION PRE-SCAN ---
             mod_meta = ""
             is_admin = message.guild is not None and hasattr(message.author, 'guild_permissions') and message.author.guild_permissions.administrator
@@ -683,20 +3293,23 @@ async def on_message(message):
             seen_emoji_names = set()
             # 1. Application-level emojis (highest priority)
             for e in application_emojis:
-                if e.name not in seen_emoji_names:
+                e_name_lower = e.name.lower()
+                if e_name_lower not in seen_emoji_names:
                     app_emojis.append(f":{e.name}:")
-                    seen_emoji_names.add(e.name)
+                    seen_emoji_names.add(e_name_lower)
             # 2. Bot-level emojis
             for e in bot.emojis:
-                if e.available and e.name not in seen_emoji_names:
+                e_name_lower = e.name.lower()
+                if e.available and e_name_lower not in seen_emoji_names:
                     other_emojis.append(f":{e.name}:")
-                    seen_emoji_names.add(e.name)
+                    seen_emoji_names.add(e_name_lower)
             # 3. Server emojis (lowest priority)
             if message.guild:
                 for e in message.guild.emojis:
-                    if e.available and e.name not in seen_emoji_names:
+                    e_name_lower = e.name.lower()
+                    if e.available and e_name_lower not in seen_emoji_names:
                         other_emojis.append(f":{e.name}:")
-                        seen_emoji_names.add(e.name)
+                        seen_emoji_names.add(e_name_lower)
             # Shuffle each group so the AI doesn't always gravitate to the first ones
             random.shuffle(app_emojis)
             random.shuffle(other_emojis)
@@ -899,10 +3512,17 @@ async def on_message(message):
                     recent_reactions.append(emoji_str)
                     ai.channel_state[channel_id]["recent_reactions"] = recent_reactions[-4:] # remember last 4
                 
-                    # Check for custom emoji in this guild
-                    custom_emoji = discord.utils.get(message.guild.emojis, name=emoji_name)
+                    # Check for custom emoji case-insensitively (guild, bot, or application level)
+                    custom_emoji = None
+                    if message.guild:
+                        custom_emoji = next((e for e in message.guild.emojis if e.name.lower() == emoji_name.lower() and e.available), None)
+                    if not custom_emoji:
+                        custom_emoji = next((e for e in bot.emojis if e.name.lower() == emoji_name.lower() and e.available), None)
+                    if not custom_emoji:
+                        custom_emoji = next((e for e in application_emojis if e.name.lower() == emoji_name.lower()), None)
+                    
                     try:
-                        if custom_emoji and custom_emoji.available:
+                        if custom_emoji:
                             await message.add_reaction(custom_emoji)
                         else:
                             # Fallback to standard emoji char or name
@@ -1249,20 +3869,21 @@ async def on_message(message):
             # --- CUSTOM/APPLICATION EMOJI PARSER ---
             # Replaces unformatted :emoji_name: with <:emoji_name:id> (or <a:emoji_name:id>).
             # Avoids double-formatting by matching and skipping already-formatted emojis.
+            # Perform case-insensitive matching to handle AI-generated name casing variations.
             emoji_pattern = re.compile(r'(<a?:[a-zA-Z0-9_~]+:\d+>)|:([a-zA-Z0-9_~]+):')
             def replace_custom_emoji(match):
                 if match.group(1):
                     return match.group(1) # Already formatted, do not touch
-                e_name = match.group(2)
+                e_name = match.group(2).lower()
                 if message.guild:
                     for emoji in message.guild.emojis:
-                        if emoji.name == e_name and emoji.available:
+                        if emoji.name.lower() == e_name and emoji.available:
                             return str(emoji)
                 for emoji in bot.emojis:
-                    if emoji.name == e_name and emoji.available:
+                    if emoji.name.lower() == e_name and emoji.available:
                         return str(emoji)
                 for emoji in application_emojis:
-                    if emoji.name == e_name:
+                    if emoji.name.lower() == e_name:
                         return str(emoji)
                 return match.group(0) # Not found in bot/server/application emojis, keep as-is
             response = emoji_pattern.sub(replace_custom_emoji, response)

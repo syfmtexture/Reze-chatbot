@@ -197,3 +197,21 @@ async def get_user_recent_messages(user_id: str) -> list:
     if doc:
         return doc.get("recent_messages", [])
     return []
+
+
+# --- E-FAMILY SYSTEM ---
+family_col = db['family']
+
+async def get_family(user_id: str) -> dict:
+    """Fetches a user's family data. Returns a default dictionary if not found."""
+    doc = await family_col.find_one({"_id": user_id})
+    if not doc:
+        return {"_id": user_id, "spouse": None, "parents": [], "children": []}
+    if "parents" not in doc: doc["parents"] = []
+    if "children" not in doc: doc["children"] = []
+    if "spouse" not in doc: doc["spouse"] = None
+    return doc
+
+async def save_family(family_data: dict):
+    """Saves/updates a user's family data."""
+    await family_col.replace_one({"_id": family_data["_id"]}, family_data, upsert=True)

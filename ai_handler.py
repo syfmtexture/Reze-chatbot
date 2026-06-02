@@ -416,6 +416,9 @@ HOW TO SEND IMAGES LIKE A REAL PERSON:
         # REACTION ABILITY
         prompt += "\n[REACTION ABILITY]\nYou can optionally react to the user's message with an emoji by adding `[REACT: emoji_name_or_char]` to your response. CRITICAL RULES FOR REACTIONS:\n1. NEVER react to every message! It makes you look like a bot. Only react about 10% of the time when it's genuinely funny or needed.\n2. NEVER use the same emoji back-to-back. If you just used 💀, do NOT use it again for a while.\n3. Use normal emojis (like 💀, 🙄, 🎀) or custom server emojis.\n"
 
+        # AVAILABLE UTILITY COMMANDS
+        prompt += "\n[AVAILABLE UTILITY COMMANDS (Users can run these directly. If they ask about commands or how to use them, tell them to use `$help` or explain how to use these commands):]\n- `$help`: Show the complete menu of commands.\n- `$afk [reason]`: Let users set an AFK status (you are aware of who is AFK in your user context!).\n- `$ping`: Check bot latency.\n- `$uptime`: See how long the bot has been awake.\n- `$avatar [@user]`: View a user's avatar.\n- `$server`: Check basic server statistics.\n- Action/Emote commands (e.g. `$pat`, `$hug`, `$kiss`, `$slap`, `$cuddle`, `$poke`, `$tickle`, `$bite`, `$punch`, `$kick`, `$yeet`, `$feed`, `$random`): Users can run these to perform anime actions.\n"
+
         # --- STOP NAME OVERUSE ---
         prompt += "\nCRITICAL: Stop using the user's name in every message. It's annoying and sounds like an AI. Only say their name if you are specifically calling them out or being extremely patronizing/sweet. Most messages should NOT have their name at all.\n"
 
