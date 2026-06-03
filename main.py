@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 from ai_handler import AIHandler
 import logging
 import asyncio
+from collections import deque
 
 # Ensure unicode output works correctly on Windows consoles
 if sys.platform == "win32":
@@ -210,6 +211,27 @@ reze_mention_history = {}
 # Track application-scoped emojis fetched at startup
 application_emojis = []
 
+class MessageIDCache:
+    def __init__(self, maxsize=5000):
+        self.maxsize = maxsize
+        self.queue = deque()
+        self.set = set()
+
+    def add(self, msg_id):
+        if msg_id in self.set:
+            return
+        self.queue.append(msg_id)
+        self.set.add(msg_id)
+        if len(self.queue) > self.maxsize:
+            oldest = self.queue.popleft()
+            self.set.discard(oldest)
+
+    def __contains__(self, msg_id):
+        return msg_id in self.set
+
+# Track recent command output message IDs (to prevent replying to replies of command outputs)
+command_output_message_ids = MessageIDCache(maxsize=5000)
+
 # AFK status tracker (user_id -> {"reason": reason, "time": timestamp, "name": display_name})
 afk_users = {}
 
@@ -243,12 +265,12 @@ command_cooldown_timestamps = {}
 # --- ANIME ACTIONS & EMOTES (Nekos.best API) ---
 ACTIONS = [
     "angry", "baka", "bite", "bleh", "blowkiss", "blush", "bonk", "bored", "carry",
-    "chase", "cheer", "clap", "confused", "cringe", "cry", "cuddle", "dance", "facepalm",
-    "feed", "handhold", "handshake", "happy", "highfive", "hug", "kick", "kiss",
-    "laugh", "lick", "lurk", "nod", "nom", "nope", "panic", "pat", "poke",
-    "pout", "punch", "run", "sad", "scream", "shrug", "slap", "sleep",
-    "smile", "smug", "stare", "surprised", "tailwhip", "think", "threaten", "thumbsup",
-    "tickle", "tired", "wave", "wink", "yawn", "yeet"
+    "clap", "confused", "cry", "cuddle", "dance", "drool", "facepalm",
+    "feed", "fuck", "handhold", "handshake", "happy", "highfive", "hug", "kabedon", "kick", "kill", "kiss",
+    "lappillow", "laugh", "lick", "lurk", "nod", "nom", "nope", "nosebleed", "nuzzle", "pat", "peck", "poke",
+    "pout", "punch", "run", "salute", "shake", "shrug", "shoot", "sip", "slap", "sleep",
+    "smile", "smug", "spin", "stare", "tableflip", "think", "thumbsup",
+    "tickle", "wave", "wink", "yawn", "yeet"
 ]
 
 ACTION_VERBS = {
@@ -537,6 +559,69 @@ ACTION_VERBS = {
         "yeets {target}! 💨",
         "throws {target} into orbit! 🚀",
         "chucks {target} across the room! 💥"
+    ],
+    "shoot": [
+        "shoots at {target}! 🔫",
+        "takes aim and fires at {target}! 💥",
+        "bang! shoots {target}! 💥"
+    ],
+    "kill": [
+        "kills {target}! 💀",
+        "murders {target} in cold blood! 🔫",
+        "annihilates {target}! 💥"
+    ],
+    "peck": [
+        "gives {target} a quick peck on the cheek! 😳",
+        "pecks {target}! 😚"
+    ],
+    "sip": [
+        "sips a drink with {target}. ☕",
+        "sips tea while looking at {target}... ☕"
+    ],
+    "tableflip": [
+        "flips a table at {target}! ┬─┬  (╯°□°)╯ ┻━┻",
+        "is so done with {target} they flip a table! ┻━┻"
+    ],
+    "spin": [
+        "spins around {target}! 🌀",
+        "spins {target} around! 🌀"
+    ],
+    "shake": [
+        "shakes {target} vigorously! 🤝",
+        "shakes hands with {target}! 🤝"
+    ],
+    "kabedon": [
+        "kabedons {target} against the wall! 😳",
+        "pins {target} to the wall! (KABEDON) 🤫"
+    ],
+    "salute": [
+        "salutes {target}! 🫡",
+        "gives a respectful salute to {target}. 🫡"
+    ],
+    "lappillow": [
+        "rests their head on {target}'s lap for a cozy lap pillow~ 😳",
+        "gets a warm lap pillow from {target}! 💕",
+        "lays down with their head on {target}'s lap. 🥺"
+    ],
+    "nosebleed": [
+        "gets a massive nosebleed looking at {target}! 🥵",
+        "stares at {target} and gets a nosebleed! 😳",
+        "wipes away a nosebleed caused by {target}! 🩸"
+    ],
+    "nuzzle": [
+        "nuzzles against {target} affectionately~ 🥰",
+        "gives {target} a warm, cozy nuzzle. 💕",
+        "snuggles up and nuzzles {target}! 🥺"
+    ],
+    "drool": [
+        "drools over {target}... looking good! 🥵",
+        "looks at {target} and starts drooling! 🤤",
+        "is drooling because of {target}! 💦"
+    ],
+    "fuck": [
+        "fucks {target} over! 😤",
+        "beats the absolute crap out of {target}! 👊",
+        "yells \"FUCK YOU\" at {target}! 🤬"
     ]
 }
 
@@ -825,6 +910,69 @@ ACTION_SOLO = {
         "yeets themselves out of the window! 💨",
         "yeets their phone onto the bed. 📱",
         "yeets a water bottle. 🧴"
+    ],
+    "shoot": [
+        "shoots into the air! 🔫",
+        "is reloading their weapon. 🔫",
+        "pew pew! 🔫"
+    ],
+    "kill": [
+        "is looking for a target... 🔫",
+        "is on a rampage! 💀",
+        "eliminated someone. 💥"
+    ],
+    "peck": [
+        "is waiting for a peck... 🥺",
+        "gives a small peck. 🌸"
+    ],
+    "sip": [
+        "sips their coffee quietly. ☕",
+        "sips tea... delicious. 🍵",
+        "just sips. 🧋"
+    ],
+    "tableflip": [
+        "flips a table in rage! (╯°□°)╯︵ ┻━┻",
+        "┻━┻ ︵ ╰(°ㅂ°╰) flips table back!",
+        "table flipped! ┻━┻"
+    ],
+    "spin": [
+        "spins around in circles! 🌀",
+        "wheee! spins! 🌀"
+    ],
+    "shake": [
+        "shakes head. 🤦‍♀️",
+        "is shaking! 🥶"
+    ],
+    "kabedon": [
+        "practices kabedon on a wall... 🧱",
+        "leans against the wall. 🧱"
+    ],
+    "salute": [
+        "salutes! Yes sir! 🫡",
+        "stands at attention and salutes. 🫡"
+    ],
+    "lappillow": [
+        "wants a cozy lap pillow... 🥺",
+        "is waiting for someone to lay on their lap. 🌸"
+    ],
+    "nosebleed": [
+        "gets a nosebleed! 😳",
+        "is blushing with a nosebleed. 🥵",
+        "wipes their nose... is that blood? 🩸"
+    ],
+    "nuzzle": [
+        "wants a warm nuzzle... 🥺",
+        "nuzzles their favorite plushie. 🧸"
+    ],
+    "drool": [
+        "drools sleepily... 🤤",
+        "wipes some drool from their mouth. 🤫",
+        "is drooling over thoughts of sweet coffee. ☕"
+    ],
+    "fuck": [
+        "screams \"FUCK!\" in frustration! 🤬",
+        "is absolutely done with everything. 💀",
+        "flips everyone off! 🖕"
     ]
 }
 
@@ -1763,7 +1911,9 @@ async def on_message(message):
         if m > 0: time_str = f"{m}m {time_str}"
         if h > 0: time_str = f"{h}h {time_str}"
         
-        await message.channel.send(f"wb **{message.author.display_name}**! I've cleared your AFK status. You were gone for **{time_str}**.")
+        sent_msg = await message.channel.send(f"wb **{message.author.display_name}**! I've cleared your AFK status. You were gone for **{time_str}**.")
+        if sent_msg:
+            command_output_message_ids.add(sent_msg.id)
 
     # Check if mentioned users are AFK
     for mention in message.mentions:
@@ -1776,10 +1926,47 @@ async def on_message(message):
             if m > 0: time_str = f"{m}m {time_str}"
             if h > 0: time_str = f"{h}h {time_str}"
             
-            await message.reply(f"**{mention.display_name}** is currently AFK: **{data['reason']}** (since {time_str} ago) 💤")
+            sent_msg = await message.reply(f"**{mention.display_name}** is currently AFK: **{data['reason']}** (since {time_str} ago) 💤")
+            if sent_msg:
+                command_output_message_ids.add(sent_msg.id)
 
     # --- PREFIX COMMAND HANDLER ---
     if message.content.startswith('$'):
+        # Track command outputs to prevent replying to them later
+        class TrackedChannel:
+            def __init__(self, orig_channel):
+                self._orig_channel = orig_channel
+            def __getattr__(self, name):
+                return getattr(self._orig_channel, name)
+            async def send(self, *args, **kwargs):
+                msg = await self._orig_channel.send(*args, **kwargs)
+                if msg:
+                    command_output_message_ids.add(msg.id)
+                return msg
+
+        class TrackedMessage:
+            def __init__(self, orig_msg):
+                self._orig_msg = orig_msg
+                self.channel = TrackedChannel(orig_msg.channel)
+            def __getattr__(self, name):
+                return getattr(self._orig_msg, name)
+            def __hash__(self):
+                return hash(self._orig_msg)
+            def __eq__(self, other):
+                if isinstance(other, TrackedMessage):
+                    return self._orig_msg == other._orig_msg
+                return self._orig_msg == other
+            def __str__(self):
+                return str(self._orig_msg)
+            def __repr__(self):
+                return repr(self._orig_msg)
+            async def reply(self, *args, **kwargs):
+                msg = await self._orig_msg.reply(*args, **kwargs)
+                if msg:
+                    command_output_message_ids.add(msg.id)
+                return msg
+
+        message = TrackedMessage(message)
         # Rate limit check per user for prefix commands (max 3 commands per 10s)
         if user_id not in user_command_timestamps:
             user_command_timestamps[user_id] = []
@@ -2184,7 +2371,7 @@ async def on_message(message):
                         async with aiohttp.ClientSession() as session:
                             async with session.get(url) as resp:
                                 if resp.status == 200:
-                                    data = await resp.json()
+                                    data = await resp.json(content_type=None)
                                     current = data["current_condition"][0]
                                     temp_c = current["temp_C"]
                                     temp_f = current["temp_F"]
@@ -2250,6 +2437,8 @@ async def on_message(message):
                 embed.set_footer(text=f"Poll by {message.author.display_name}")
                 
                 poll_msg = await message.channel.send(embed=embed)
+                if poll_msg:
+                    command_output_message_ids.add(poll_msg.id)
                 for idx in range(len(options)):
                     await poll_msg.add_reaction(poll_emojis[idx])
                 return
@@ -2261,7 +2450,9 @@ async def on_message(message):
                         await message.delete()
                     except:
                         pass
-                    await message.channel.send(f"{message.author.mention} confessions should be sent in my DMs so they stay actually anonymous! 🙄", delete_after=5)
+                    warn_msg = await message.channel.send(f"{message.author.mention} confessions should be sent in my DMs so they stay actually anonymous! 🙄", delete_after=5)
+                    if warn_msg:
+                        command_output_message_ids.add(warn_msg.id)
                     return
                 
                 if not args:
@@ -2292,7 +2483,9 @@ async def on_message(message):
                                 color=discord.Color.from_rgb(255, 105, 180)
                             )
                             embed.set_footer(text="DM me $confess to submit yours!")
-                            await conf_channel.send(embed=embed)
+                            conf_msg = await conf_channel.send(embed=embed)
+                            if conf_msg:
+                                command_output_message_ids.add(conf_msg.id)
                             success = True
                 
                 if success:
@@ -2334,17 +2527,32 @@ async def on_message(message):
                 async with message.channel.typing():
                     try:
                         url = f"https://nekos.best/api/v2/{command}"
+                        headers = {"User-Agent": "MakimaChatbot/1.0"}
                         async with aiohttp.ClientSession() as session:
-                            async with session.get(url) as resp:
+                            async with session.get(url, headers=headers) as resp:
                                 if resp.status == 200:
                                     res_data = await resp.json()
                                     item = res_data["results"][0]
                                     img_url = item["url"]
-                                    char_name = item.get("character_name", "Unknown Character")
+                                    
+                                    artist_name = item.get("artist_name")
+                                    artist_href = item.get("artist_href")
+                                    source_url = item.get("source_url")
+                                    
+                                    desc_parts = []
+                                    if artist_name:
+                                        if artist_href:
+                                            desc_parts.append(f"🎨 **Artist:** [{artist_name}]({artist_href})")
+                                        else:
+                                            desc_parts.append(f"🎨 **Artist:** **{artist_name}**")
+                                    if source_url:
+                                        desc_parts.append(f"🔗 **Source:** [Artwork Link]({source_url})")
+                                        
+                                    description = "\n".join(desc_parts) if desc_parts else "A beautiful anime artwork chosen just for you! ✨"
                                     
                                     embed = discord.Embed(
                                         title=f"🌸 Your random {command} 🌸",
-                                        description=f"Meet **{char_name}**!",
+                                        description=description,
                                         color=discord.Color.from_rgb(255, 182, 193)
                                     )
                                     embed.set_image(url=img_url)
@@ -2852,27 +3060,59 @@ async def on_message(message):
                 if command == "random":
                     description += f" *(Random: {action})*"
 
-                # Fetch action GIF from nekos.best
+                # Fetch action GIF (using purrbot.site as a fallback for lick)
                 async with aiohttp.ClientSession() as session:
                     try:
-                        async with session.get(f"https://nekos.best/api/v2/{action}", timeout=10) as resp:
+                        headers = {"User-Agent": "MakimaChatbot/1.0"}
+                        if action == "lick":
+                            url = "https://api.purrbot.site/v2/img/sfw/lick/gif"
+                        elif action == "kill":
+                            url = "https://nekos.best/api/v2/shoot"
+                        elif action == "fuck":
+                            # SFW comical physical beatdown fallback
+                            fuck_fallback = random.choice(["slap", "punch", "kick", "bonk", "yeet"])
+                            url = f"https://nekos.best/api/v2/{fuck_fallback}"
+                        elif action in ["nosebleed", "nuzzle", "drool"]:
+                            url = f"https://api.otakugifs.xyz/gif?reaction={action}"
+                        else:
+                            url = f"https://nekos.best/api/v2/{action}"
+
+                        async with session.get(url, headers=headers, timeout=10) as resp:
                             if resp.status == 200:
                                 data = await resp.json()
-                                gif_url = data["results"][0]["url"]
-                                anime_name = data["results"][0]["anime_name"]
-                                
+                                if action == "lick":
+                                    gif_url = data["link"]
+                                elif action in ["nosebleed", "nuzzle", "drool"]:
+                                    gif_url = data["url"]
+                                else:
+                                    gif_url = data["results"][0]["url"]
+
                                 embed = discord.Embed(
                                     description=description,
                                     color=discord.Color.from_rgb(224, 187, 228) # Sweet light lavender
                                 )
                                 embed.set_image(url=gif_url)
                                 embed.set_footer(text="Reze bot made by texture (syfmyorii)")
-                                await message.channel.send(embed=embed)
+                                sent_msg = await message.channel.send(embed=embed)
+                                if sent_msg:
+                                    command_output_message_ids.add(sent_msg.id)
                             else:
-                                await message.reply(f"couldn't fetch the gif... nekos.best returned {resp.status} 😭")
+                                if action == "lick":
+                                    api_name = "purrbot.site"
+                                elif action in ["nosebleed", "nuzzle", "drool"]:
+                                    api_name = "otakugifs.xyz"
+                                else:
+                                    api_name = "nekos.best"
+                                await message.reply(f"couldn't fetch the gif... {api_name} returned {resp.status} 😭")
                     except Exception as e:
                         logger.error(f"Error fetching action GIF: {e}")
-                        await message.reply("nekos.best api is acting up, try again later or smth 🙄")
+                        if action == "lick":
+                            api_name = "purrbot.site"
+                        elif action in ["nosebleed", "nuzzle", "drool"]:
+                            api_name = "otakugifs.xyz"
+                        else:
+                            api_name = "nekos.best"
+                        await message.reply(f"{api_name} api is acting up, try again later or smth 🙄")
                 return
             else:
                 await message.reply("huh? what command is that... type $help or get out 🙄")
@@ -2918,12 +3158,18 @@ async def on_message(message):
             isinstance(message.reference.resolved, discord.Message) and 
             message.reference.resolved.author == bot.user
         )
+        is_reply_to_command_output = False
         
         if is_reply_to_bot:
             ref_msg = message.reference.resolved
-            # 1. Embeds or components are always command outputs (e.g. ship, family, help, confessions)
-            if ref_msg.embeds or ref_msg.components:
+            # Check if this message was sent as a command output
+            if ref_msg.id in command_output_message_ids:
                 is_reply_to_bot = False
+                is_reply_to_command_output = True
+            # 1. Embeds or components are always command outputs (e.g. ship, family, help, confessions)
+            elif ref_msg.embeds or ref_msg.components:
+                is_reply_to_bot = False
+                is_reply_to_command_output = True
             else:
                 is_cmd_output = False
                 # 2. Check if the bot message was replying to a prefix command (starts with $)
@@ -2960,10 +3206,15 @@ async def on_message(message):
                 
                 if is_cmd_output:
                     is_reply_to_bot = False
+                    is_reply_to_command_output = True
 
         # Name-trigger Logic — respond if someone says "reze" (even without pinging)
         name_triggered = False
         
+        # If replying to a command output, skip entirely — don't trigger on name or reply
+        if is_reply_to_command_output:
+            return
+
         if not (is_mentioned or is_reply_to_bot):
             msg_lower = message.content.lower()
             if "reze" in msg_lower:
