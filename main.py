@@ -28,6 +28,46 @@ import db
 import bot_config
 import games
 from PIL import Image
+from akinator import AsyncAkinator
+import akinator
+
+# Apply patch to akinator library's AsyncClient.__handler due to missing 'akitude' in modern Akinator API response
+async def _patched_handler(self, response):
+    response.raise_for_status()
+    try:
+        data = response.json()
+    except Exception as e:
+        if "A technical problem has ocurred." in response.text:
+            raise RuntimeError("A technical problem has occurred. Please try again later.") from e
+        raise RuntimeError("Failed to parse the response as JSON.") from e
+
+    if "completion" not in data:
+        data["completion"] = self.completion
+    if data["completion"] == "KO - TIMEOUT":
+        raise RuntimeError("The session has timed out. Please start a new game.")
+    if data["completion"] == "SOUNDLIKE":
+        self.finished = True
+        self.win = True
+        if not self.id_proposition:
+            await self.defeat()
+    elif "id_proposition" in data:
+        self.win = True
+        self.id_proposition = data["id_proposition"]
+        self.name_proposition = data["name_proposition"]
+        self.description_proposition = data["description_proposition"]
+        self.step_last_proposition = self.step
+        self.pseudo = data.get("pseudo")
+        self.flag_photo = data.get("flag_photo")
+        self.photo = data.get("photo")
+    else:
+        self.akitude = data.get("akitude", "defi.png")
+        self.step = int(data["step"])
+        self.progression = float(data["progression"])
+        self.question = data["question"]
+    self.completion = data["completion"]
+
+akinator.AsyncClient._AsyncClient__handler = _patched_handler
+
 
 # Load environment variables
 load_dotenv()
@@ -265,13 +305,16 @@ command_cooldown_timestamps = {}
 # --- ANIME ACTIONS & EMOTES (Nekos.best API) ---
 ACTIONS = [
     "angry", "baka", "bite", "bleh", "blowkiss", "blush", "bonk", "bored", "carry",
-    "clap", "confused", "cry", "cuddle", "dance", "drool", "facepalm",
-    "feed", "fuck", "handhold", "handshake", "happy", "highfive", "hug", "kabedon", "kick", "kill", "kiss",
-    "lappillow", "laugh", "lick", "lurk", "nod", "nom", "nope", "nosebleed", "nuzzle", "pat", "peck", "poke",
-    "pout", "punch", "run", "salute", "shake", "shrug", "shoot", "sip", "slap", "sleep",
-    "smile", "smug", "spin", "stare", "tableflip", "think", "thumbsup",
-    "tickle", "wave", "wink", "yawn", "yeet"
+    "chase", "cheer", "clap", "confused", "cringe", "cry", "cuddle", "dance", "drool",
+    "facepalm", "feed", "fuck", "handhold", "handshake", "happy", "highfive", "hug",
+    "kabedon", "kick", "kill", "kiss", "lappillow", "laugh", "lick", "lurk", "nod",
+    "nom", "nope", "nosebleed", "nuzzle", "panic", "pat", "peck", "poke", "pout",
+    "punch", "run", "sad", "salute", "scream", "shake", "shrug", "shoot", "sip",
+    "slap", "sleep", "smile", "smug", "spin", "stare", "surprised", "tableflip",
+    "tailwhip", "think", "threaten", "thumbsup", "tickle", "tired", "wave", "wink",
+    "yawn", "yeet"
 ]
+
 
 ACTION_VERBS = {
     "angry": [
@@ -441,7 +484,7 @@ ACTION_VERBS = {
     ],
     "pat": [
         "pats {target}! 💕",
-        "gently pats {target} on the head. 🌸",
+        "gently pats {target} on the head.",
         "gives {target} some soft headpats. 🥰",
         "strokes {target}'s hair... cute. 🎀"
     ],
@@ -792,7 +835,7 @@ ACTION_SOLO = {
         "sweats nervously! 😵"
     ],
     "pat": [
-        "pats themselves... how cute. 🌸",
+        "pats themselves... how cute.",
         "gives themselves a headpat. It's okay. 🥺",
         "is patting their own head. Needs attention. 🥲"
     ],
@@ -923,7 +966,7 @@ ACTION_SOLO = {
     ],
     "peck": [
         "is waiting for a peck... 🥺",
-        "gives a small peck. 🌸"
+        "gives a small peck."
     ],
     "sip": [
         "sips their coffee quietly. ☕",
@@ -953,7 +996,7 @@ ACTION_SOLO = {
     ],
     "lappillow": [
         "wants a cozy lap pillow... 🥺",
-        "is waiting for someone to lay on their lap. 🌸"
+        "is waiting for someone to lay on their lap."
     ],
     "nosebleed": [
         "gets a nosebleed! 😳",
@@ -1162,114 +1205,206 @@ def draw_ship_heart(size, percent, bg_color=(40, 40, 40, 200), fill_color=(230, 
 def get_help_embed(category: str, bot_user=None) -> discord.Embed:
     if category == "General & Utility":
         embed = discord.Embed(
-            title="🛠️ General & Utility Commands",
-            description="Basic commands to look up info or use bot features.",
-            color=discord.Color.from_rgb(212, 175, 230)
-        )
-        embed.add_field(name="👉 `$afk [reason]`", value="Set your AFK status (clears when you talk again).", inline=False)
-        embed.add_field(name="👉 `$ship [@user]`", value="Ship two users and generate a cute compatibility card! 💖", inline=False)
-        embed.add_field(name="👉 `$avatar` / `$av` `[@user]`", value="Get a user's avatar.", inline=False)
-        embed.add_field(name="👉 `$anime [query]`", value="Search MyAnimeList for anime details.", inline=False)
-        embed.add_field(name="👉 `$manga [query]`", value="Search MyAnimeList for manga details.", inline=False)
-        embed.add_field(name="👉 `$movie` / `$show` `[query]`", value="Search IMDb for movie/show details.", inline=False)
-        embed.add_field(name="👉 `$ping`", value="Check the bot's latency.", inline=False)
-        embed.add_field(name="👉 `$uptime`", value="Check how long the bot has been awake.", inline=False)
-        embed.add_field(name="👉 `$server`", value="Check server details.", inline=False)
-    elif category == "Interactive Utilities":
-        embed = discord.Embed(
-            title="⚙️ Interactive Utilities",
-            description="Helpful tools to get info or run utility tasks.",
-            color=discord.Color.from_rgb(175, 238, 238)
-        )
-        embed.add_field(name="👉 `$weather [city]`", value="Check the current weather for a city.", inline=False)
-        embed.add_field(name="👉 `$poll [question] | [option1] | [option2] | ...`", value="Create a reaction-based poll (up to 10 choices).", inline=False)
-    elif category == "Interactive & Fun":
-        embed = discord.Embed(
-            title="🎭 Interactive & Fun Commands",
-            description="Fun commands to pass the time or play around.",
-            color=discord.Color.from_rgb(255, 182, 193)
-        )
-        embed.add_field(name="👉 `$confess [confession]` (DM only)", value="Submit an anonymous confession to the server.", inline=False)
-        embed.add_field(name="👉 `$choose [options]`", value="Let Reze choose between options separated by `|` or commas.", inline=False)
-        embed.add_field(name="👉 `$waifu` / `$husbando`", value="Fetch a random anime character image.", inline=False)
-        embed.add_field(name="👉 `$quote`", value="Get a random anime quote.", inline=False)
-        embed.add_field(name="👉 `$cat` / `$dog`", value="Get a random cute cat or dog picture.", inline=False)
-    elif category == "Affection Actions":
-        embed = discord.Embed(
-            title="🌸 Affection Actions",
-            description="Use these actions to express affection to someone: `$[action] [@user]` or `$random`.",
-            color=discord.Color.from_rgb(255, 182, 193)
-        )
-        embed.add_field(name="Commands list", value="`pat`, `hug`, `kiss`, `cuddle`, `handhold`, `feed`, `tickle`, `highfive`, `cheer`, `wink`, `smile`, `happy`, `blowkiss`", inline=False)
-    elif category == "Expression Actions":
-        embed = discord.Embed(
-            title="✨ Expression Actions",
-            description="Use these to express how you are feeling: `$[action] [@user]` or `$random`.",
-            color=discord.Color.from_rgb(224, 187, 228)
-        )
-        embed.add_field(name="Commands list", value="`blush`, `cry`, `cringe`, `confused`, `facepalm`, `bored`, `tired`, `sleep`, `sad`, `scream`, `panic`, `yawn`, `surprised`, `chase`, `run`, `handshake`, `tailwhip`, `nope`", inline=False)
-    elif category == "Playful Actions":
-        embed = discord.Embed(
-            title="🐱 Playful Actions",
-            description="Fun and playful commands to interact: `$[action] [@user]` or `$random`.",
-            color=discord.Color.from_rgb(255, 223, 186)
-        )
-        embed.add_field(name="Commands list", value="`poke`, `nom`, `lick`, `bleh`, `wave`, `dance`, `smug`, `shrug`, `nod`, `thumbsup`, `lurk`, `think`, `stare`", inline=False)
-    elif category == "Chaos Actions":
-        embed = discord.Embed(
-            title="💥 Chaos Actions",
-            description="Bring some chaos to the chat: `$[action] [@user]` or `$random`.",
-            color=discord.Color.from_rgb(255, 105, 97)
-        )
-        embed.add_field(name="Commands list", value="`slap`, `punch`, `kick`, `yeet`, `bite`, `bonk`, `threaten`, `angry`, `baka`", inline=False)
-    elif category == "Server & Settings":
-        embed = discord.Embed(
-            title="⚙️ Server & Settings Commands",
-            description="Slash commands to configure the bot for this server.",
-            color=discord.Color.from_rgb(175, 238, 238)
-        )
-        embed.add_field(name="👉 `/setup`", value="Configure all server channels and roles.", inline=False)
-        embed.add_field(name="👉 `/setrole [type] [role]`", value="Manually assign gender, hinglish, or nsfw roles.", inline=False)
-        embed.add_field(name="👉 `/setchannel [type] [channel]`", value="Assign bot-specific channels.", inline=False)
-        embed.add_field(name="👉 `/resetconfig`", value="Reset this server's configuration.", inline=False)
-        embed.add_field(name="👉 `/nsfw` (DMs only)", value="Toggle NSFW mode in DMs.", inline=False)
-    elif category == "E-Family System":
-        embed = discord.Embed(
-            title="👪 E-Family System",
-            description="Build your virtual family with marriage, adoption, and more!",
-            color=discord.Color.from_rgb(255, 215, 0)
-        )
-        embed.add_field(name="👉 `$marry [@user]`", value="Propose marriage to another user (requires acceptance).", inline=False)
-        embed.add_field(name="👉 `$adopt [@user]`", value="Propose to adopt another user as your child (requires acceptance).", inline=False)
-        embed.add_field(name="👉 `$divorce`", value="Divorce your current spouse.", inline=False)
-        embed.add_field(name="👉 `$disown [@user]`", value="Disown one of your children.", inline=False)
-        embed.add_field(name="👉 `$abandon [@user]`", value="Abandon one of your parents.", inline=False)
-        embed.add_field(name="👉 `$runaway`", value="Run away from home (removes all parents).", inline=False)
-        embed.add_field(name="👉 `$disownall`", value="Disown all of your children at once.", inline=False)
-        embed.add_field(name="👉 `$family` `[@user]`", value="Show the family details and tree of a user (defaults to you).", inline=False)
-    else:
-        embed = discord.Embed(
-            title="🌸 REZE COMMAND MENU 🌸",
-            description="*\"obviously, i'm the best bot in this server. here's a breakdown of my commands and features. try not to break anything or spam me, or i'll literally put you on my ignore list 🙄\"*",
-            color=discord.Color.from_rgb(212, 175, 230)
+            title="🛠️ General & Utility",
+            description="*Utility commands for checking info, search, or status.*",
+            color=discord.Color.from_rgb(180, 160, 220)
         )
         embed.add_field(
-            name="💬 Chatting with Me",
-            value="Mention me or reply to my messages to talk. If you say my name (`reze`) in any text, I might respond. But don't spam me or I'll put you on my ignore list (grudge system) 🙄.",
+            name="🔍 Search & Lookup",
+            value="• `$anime [query]` ─ Search MyAnimeList for anime details.\n"
+                  "• `$manga [query]` ─ Search MyAnimeList for manga details.\n"
+                  "• `$movie` / `$show` `[query]` ─ Search IMDb details.\n"
+                  "• `$avatar` / `$av` `[@user]` ─ Retrieve a user's avatar.",
             inline=False
         )
         embed.add_field(
-            name="🎭 Dynamic Moods",
-            value="My personality shifts dynamically! I can be `NORMAL`, `LAZY`, `YAPPING`, `ANNOYED`, `BORED`, `HUNGRY`, `DISTRACTED` (playing Valorant), or `DRUNK` (tipsy mode on Fri/Sat nights).",
+            name="💖 Love & Connection",
+            value="• `$ship [@user]` ─ Calculate compatibility and generate a cute card.\n"
+                  "• `$afk [reason]` ─ Set away status (clears when you speak again).",
+            inline=False
+        )
+        embed.add_field(
+            name="⚡ System Stats",
+            value="• `$ping` ─ Check bot response latency.\n"
+                  "• `$uptime` ─ See how long the bot has been awake.\n"
+                  "• `$server` ─ Display Discord server details.",
+            inline=False
+        )
+    elif category == "Interactive Utilities":
+        embed = discord.Embed(
+            title="⚙️ Interactive Utilities",
+            description="*Helpful utility tools for managing server activities.*",
+            color=discord.Color.from_rgb(175, 238, 238)
+        )
+        embed.add_field(
+            name="🌤️ Weather Lookup",
+            value="• `$weather [city]` ─ Fetch real-time weather information.",
+            inline=False
+        )
+        embed.add_field(
+            name="📊 Server Polls",
+            value="• `$poll [question] | [opt1] | [opt2] | ...` ─ Create a reaction poll (up to 10 options).",
+            inline=False
+        )
+    elif category == "Interactive & Fun":
+        embed = discord.Embed(
+            title="🎭 Interactive & Fun",
+            description="*Bored? Use these commands to have fun, play games, or make memes.*",
+            color=discord.Color.from_rgb(255, 182, 193)
+        )
+        embed.add_field(
+            name="🎮 Games & AI",
+            value="• `$akinator` ─ Play Akinator directly in chat using buttons.\n"
+                  "• `$choose [opt1 | opt2]` ─ Let Reze choose between options.\n"
+                  "• `$quote` ─ Get a random anime quote.",
+            inline=False
+        )
+        embed.add_field(
+            name="🎨 Meme Generation",
+            value="• `$wanted` / `$bounty` `[@user]` ─ Generate a One Piece wanted poster.\n"
+                  "• `$jail [@user]` ─ Lock up a user behind photorealistic bars.\n"
+                  "• `$rip [@user] [reason]` ─ Mourn a user with a customized gravestone meme.\n"
+                  "• `$gandhi` / `$fakequote` `[text]` ─ Generate a fake quote on a Gandhi background banner.",
+            inline=False
+        )
+        embed.add_field(
+            name="🌈 Fun Ratings & Actions",
+            value="• `$gay` / `$lesbian` `[@user]` ─ Check gayness/lesbianness percentage.\n"
+                  "• `$impersonate [@user] [text]` ─ Mimic someone with temporary webhooks.\n"
+                  "• `$waifu` / `$husbando` ─ Fetch random Anime characters (with voting!).\n"
+                  "• `$cat` / `$dog` ─ Fetch cute random animal pictures.\n"
+                  "• `$confess [text]` ─ Submit anonymous confession (DM only).",
+            inline=False
+        )
+    elif category == "Affection Actions":
+        embed = discord.Embed(
+            title="💖 Affection Actions",
+            description="*Express affection to other members or random targets.*",
+            color=discord.Color.from_rgb(255, 182, 193)
+        )
+        embed.add_field(
+            name="💡 Usage",
+            value="Use `$[action] [@user]` or `$[action] random` to trigger the emote.",
+            inline=False
+        )
+        embed.add_field(
+            name="🎬 Available Actions",
+            value="`pat` • `hug` • `kiss` • `cuddle` • `handhold` • `feed` • `tickle` • `highfive` • `cheer` • `wink` • `smile` • `happy` • `blowkiss`",
+            inline=False
+        )
+    elif category == "Expression Actions":
+        embed = discord.Embed(
+            title="✨ Expression Actions",
+            description="*Express how you are feeling to the chat.*",
+            color=discord.Color.from_rgb(224, 187, 228)
+        )
+        embed.add_field(
+            name="💡 Usage",
+            value="Use `$[action] [@user]` or `$[action] random` to trigger the emote.",
+            inline=False
+        )
+        embed.add_field(
+            name="🎬 Available Actions",
+            value="`blush` • `cry` • `cringe` • `confused` • `facepalm` • `bored` • `tired` • `sleep` • `sad` • `scream` • `panic` • `yawn` • `surprised` • `chase` • `run` • `handshake` • `tailwhip` • `nope`",
+            inline=False
+        )
+    elif category == "Playful Actions":
+        embed = discord.Embed(
+            title="🐱 Playful Actions",
+            description="*Fun and playful interactions with friends.*",
+            color=discord.Color.from_rgb(255, 223, 186)
+        )
+        embed.add_field(
+            name="💡 Usage",
+            value="Use `$[action] [@user]` or `$[action] random` to trigger the emote.",
+            inline=False
+        )
+        embed.add_field(
+            name="🎬 Available Actions",
+            value="`poke` • `nom` • `lick` • `bleh` • `wave` • `dance` • `smug` • `shrug` • `nod` • `thumbsup` • `lurk` • `think` • `stare`",
+            inline=False
+        )
+    elif category == "Chaos Actions":
+        embed = discord.Embed(
+            title="💥 Chaos Actions",
+            description="*Bring some chaotic energy to the chat.*",
+            color=discord.Color.from_rgb(255, 105, 97)
+        )
+        embed.add_field(
+            name="💡 Usage",
+            value="Use `$[action] [@user]` or `$[action] random` to trigger the emote.",
+            inline=False
+        )
+        embed.add_field(
+            name="🎬 Available Actions",
+            value="`slap` • `punch` • `kick` • `yeet` • `bite` • `bonk` • `threaten` • `angry` • `baka`",
+            inline=False
+        )
+    elif category == "Server & Settings":
+        embed = discord.Embed(
+            title="⚙️ Server & Settings",
+            description="*Configure and setup Reze's settings for this guild.*",
+            color=discord.Color.from_rgb(175, 238, 238)
+        )
+        embed.add_field(
+            name="🛠️ Server Setup",
+            value="• `/setup` ─ Interactively configure channels and roles.\n"
+                  "• `/resetconfig` ─ Reset all configuration data for this server.",
+            inline=False
+        )
+        embed.add_field(
+            name="🏷️ Config Assignments",
+            value="• `/setrole [type] [role]` ─ Manually assign gender, hinglish, or nsfw roles.\n"
+                  "• `/setchannel [type] [channel]` ─ Assign bot-specific channels.\n"
+                  "• `/nsfw` ─ Toggle NSFW channels (DM only).",
+            inline=False
+        )
+    elif category == "E-Family System":
+        embed = discord.Embed(
+            title="👪 E-Family System",
+            description="*Establish marriages, adopt children, and build your virtual family tree.*",
+            color=discord.Color.from_rgb(255, 215, 0)
+        )
+        embed.add_field(
+            name="💍 Marriage & Adoption",
+            value="• `$marry [@user]` ─ Propose marriage to another member.\n"
+                  "• `$adopt [@user]` ─ Propose to adopt a member as your child.",
+            inline=False
+        )
+        embed.add_field(
+            name="💔 Family Drama",
+            value="• `$divorce` ─ Divorce your current spouse.\n"
+                  "• `$disown [@user]` ─ Disown one of your children.\n"
+                  "• `$abandon [@user]` ─ Abandon one of your parents.\n"
+                  "• `$runaway` ─ Run away from home (removes parents).\n"
+                  "• `$disownall` ─ Disown all children at once.",
+            inline=False
+        )
+        embed.add_field(
+            name="🌳 Family Trees",
+            value="• `$family [@user]` ─ Display the family tree of a user.",
+            inline=False
+        )
+    else:
+        embed = discord.Embed(
+            title="🎭 Reze Command Menu",
+            description="*\"Obviously, I'm the best bot in this server. Here's a breakdown of my commands and features. Try not to break anything or spam me, or I'll literally put you on my ignore list... 🙄\"*",
+            color=discord.Color.from_rgb(212, 175, 230)
+        )
+        embed.add_field(
+            name="💬 Chatting & Personality",
+            value="• **Interact**: Mention me or reply to my messages to start a chat.\n"
+                  "• **Mention**: If you say my name (`reze`) in chat, I might react.\n"
+                  "• **Dynamic Moods**: Normal, Lazy, Yapping, Annoyed, Bored, Hungry, Distracted, or Drunk!",
             inline=False
         )
         embed.add_field(
             name="📖 Command Categories",
-            value="🛠️ **General & Utility:** Basic lookup, ship, search, etc.\n"
-                  "⚙️ **Interactive Utilities:** Weather, poll.\n"
-                  "🎭 **Interactive & Fun:** Confessions, choice, waifu/husbando, quotes, animals.\n"
-                  "👪 **E-Family System:** Marry, adopt, divorce, disown, family tree.\n"
-                  "🌸 **Actions & Emotes:** Affection, Expression, Playful, and Chaos action emojis.",
+            value="🛠️ `General & Utility` ─ Basic lookup, shipping, search, uptime.\n"
+                  "⚙️ `Interactive Utilities` ─ Weather, polling.\n"
+                  "🎭 `Interactive & Fun` ─ Games, Wanted posters, Gandhi quotes, Jail, Akinator, and RIP cards.\n"
+                  "👪 `E-Family System` ─ Marry, adopt, divorce, family trees.\n"
+                  "👉 `Emotes & Actions` ─ Affection, Expression, Playful, and Chaos action emojis.",
             inline=False
         )
         if bot_user and bot_user.avatar:
@@ -1281,12 +1416,12 @@ def get_help_embed(category: str, bot_user=None) -> discord.Embed:
 class HelpSelect(discord.ui.Select):
     def __init__(self):
         options = [
-            discord.SelectOption(label="Landing Page", description="Back to main welcome page", emoji="🌸"),
+            discord.SelectOption(label="Landing Page", description="Back to main welcome page", emoji="🏠"),
             discord.SelectOption(label="General & Utility", description="Basic commands, shipping, search, etc.", emoji="🛠️"),
             discord.SelectOption(label="Interactive Utilities", description="Weather, polls, etc.", emoji="⚙️"),
             discord.SelectOption(label="Interactive & Fun", description="Confess, choose, waifu, quotes...", emoji="🎭"),
             discord.SelectOption(label="E-Family System", description="Marry, adopt, divorce, disown, family tree...", emoji="👪"),
-            discord.SelectOption(label="Affection Actions", description="Pat, hug, kiss, cuddle...", emoji="🌸"),
+            discord.SelectOption(label="Affection Actions", description="Pat, hug, kiss, cuddle...", emoji="💖"),
             discord.SelectOption(label="Expression Actions", description="Blush, cry, yawn, sleep...", emoji="✨"),
             discord.SelectOption(label="Playful Actions", description="Poke, dance, smug, bleh...", emoji="🐱"),
             discord.SelectOption(label="Chaos Actions", description="Slap, yeet, punch, bonk...", emoji="💥"),
@@ -1338,6 +1473,204 @@ class ProposalView(discord.ui.View):
 
     async def on_timeout(self):
         self.accepted = False
+
+
+class SmashPassView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=180.0)
+        self.smashers = set()
+        self.passers = set()
+        self.message = None
+
+    @discord.ui.button(label="Smash 🔥 (0)", style=discord.ButtonStyle.success)
+    async def smash(self, interaction: discord.Interaction, button: discord.ui.Button):
+        user_id = interaction.user.id
+        if user_id in self.smashers:
+            self.smashers.remove(user_id)
+        else:
+            self.smashers.add(user_id)
+            self.passers.discard(user_id)
+        
+        self.update_buttons()
+        await interaction.response.edit_message(view=self)
+
+    @discord.ui.button(label="Pass 💤 (0)", style=discord.ButtonStyle.danger)
+    async def pass_char(self, interaction: discord.Interaction, button: discord.ui.Button):
+        user_id = interaction.user.id
+        if user_id in self.passers:
+            self.passers.remove(user_id)
+        else:
+            self.passers.add(user_id)
+            self.smashers.discard(user_id)
+            
+        self.update_buttons()
+        await interaction.response.edit_message(view=self)
+
+    def update_buttons(self):
+        self.children[0].label = f"Smash 🔥 ({len(self.smashers)})"
+        self.children[1].label = f"Pass 💤 ({len(self.passers)})"
+
+    async def on_timeout(self):
+        for child in self.children:
+            child.disabled = True
+        try:
+            if self.message:
+                await self.message.edit(view=self)
+        except Exception:
+            pass
+
+
+class AkinatorView(discord.ui.View):
+    def __init__(self, author):
+        super().__init__(timeout=90.0)
+        self.author = author
+        self.aki = AsyncAkinator()
+        self.message = None
+        # Find and disable the Undo button initially
+        for child in self.children:
+            if child.label == "Undo":
+                child.disabled = True
+        
+    async def start(self):
+        await self.aki.start_game()
+        return self.aki.question
+
+    async def process_answer(self, interaction: discord.Interaction, answer_val):
+        if interaction.user.id != self.author.id:
+            await interaction.response.send_message("this is not your game, dummy 🙄", ephemeral=True)
+            return
+            
+        await interaction.response.defer()
+        
+        try:
+            if answer_val == "back":
+                await self.aki.back()
+            else:
+                await self.aki.answer(answer_val)
+                
+            # Check if game is finished (victory or defeat)
+            if self.aki.finished:
+                if self.aki.win:
+                    embed = discord.Embed(
+                        title="🔮 Akinator Wins! 🔮",
+                        description=f"I guessed it! It was **{self.aki.name_proposition}**!\n\n*{self.aki.question}*",
+                        color=discord.Color.from_rgb(212, 175, 230)
+                    )
+                    if self.aki.photo:
+                        embed.set_image(url=self.aki.photo)
+                else:
+                    embed = discord.Embed(
+                        title="🔮 You Defeated Akinator! 🔮",
+                        description=self.aki.question,
+                        color=discord.Color.from_rgb(212, 175, 230)
+                    )
+                
+                for child in self.children:
+                    child.disabled = True
+                await interaction.followup.edit_message(message_id=self.message.id, embed=embed, view=self)
+                self.stop()
+                return
+
+            # Check if Akinator is making a guess
+            if self.aki.win:
+                embed = discord.Embed(
+                    title="🔮 Akinator's Guess! 🔮",
+                    description=f"Is it **{self.aki.name_proposition}**?\n*{self.aki.description_proposition}*",
+                    color=discord.Color.from_rgb(212, 175, 230)
+                )
+                if self.aki.photo:
+                    embed.set_image(url=self.aki.photo)
+                
+                for child in self.children:
+                    if child.label in ["Yes", "No", "Stop"]:
+                        child.disabled = False
+                    else:
+                        child.disabled = True
+                
+                await interaction.followup.edit_message(message_id=self.message.id, embed=embed, view=self)
+                return
+
+            # Otherwise, show next question
+            for child in self.children:
+                if child.label == "Undo" and self.aki.step == 0:
+                    child.disabled = True
+                else:
+                    child.disabled = False
+                    
+            embed = discord.Embed(
+                title=f"🔮 Akinator (Question {self.aki.step + 1}) 🔮",
+                description=f"### {self.aki.question}",
+                color=discord.Color.from_rgb(212, 175, 230)
+            )
+            embed.set_footer(text=f"Progression: {int(self.aki.progression)}% | Playing: {self.author.display_name}")
+            await interaction.followup.edit_message(message_id=self.message.id, embed=embed, view=self)
+            
+        except Exception as e:
+            logger.error(f"Akinator error: {e}")
+            await interaction.followup.send("something went wrong with the Akinator API 😭", ephemeral=True)
+
+    @discord.ui.button(label="Yes", style=discord.ButtonStyle.success, row=0)
+    async def yes(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.process_answer(interaction, "yes")
+
+    @discord.ui.button(label="No", style=discord.ButtonStyle.danger, row=0)
+    async def no(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.process_answer(interaction, "no")
+
+    @discord.ui.button(label="I Don't Know", style=discord.ButtonStyle.secondary, row=0)
+    async def idk(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.process_answer(interaction, "i don't know")
+
+    @discord.ui.button(label="Probably", style=discord.ButtonStyle.primary, row=1)
+    async def probably(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.process_answer(interaction, "probably")
+
+    @discord.ui.button(label="Probably Not", style=discord.ButtonStyle.primary, row=1)
+    async def probably_not(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.process_answer(interaction, "probably not")
+
+    @discord.ui.button(label="Undo", style=discord.ButtonStyle.secondary, row=2)
+    async def undo(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.aki.step == 0:
+            await interaction.response.send_message("you can't go back any further!", ephemeral=True)
+            return
+        await self.process_answer(interaction, "back")
+
+    @discord.ui.button(label="Stop", style=discord.ButtonStyle.danger, row=2)
+    async def stop_game(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.author.id:
+            await interaction.response.send_message("this is not your game, dummy 🙄", ephemeral=True)
+            return
+        for child in self.children:
+            child.disabled = True
+        embed = discord.Embed(
+            title="🔮 Akinator Game Stopped 🔮",
+            description="The game was stopped by the player.",
+            color=discord.Color.from_rgb(120, 120, 120)
+        )
+        try:
+            await interaction.response.edit_message(embed=embed, view=self)
+        except Exception as e:
+            logger.warning(f"Failed to edit message on stop_game: {e}")
+        self.stop()
+
+    async def on_timeout(self):
+        for child in self.children:
+            child.disabled = True
+        try:
+            if self.message:
+                embed = discord.Embed(
+                    title="🔮 Akinator Timeout 🔮",
+                    description="The game has timed out due to inactivity.",
+                    color=discord.Color.from_rgb(120, 120, 120)
+                )
+                await self.message.edit(embed=embed, view=self)
+        except Exception:
+            pass
+
+    async def on_error(self, interaction: discord.Interaction, error: Exception, item: discord.ui.Item) -> None:
+        # Quietly log any transient interaction or network errors
+        logger.warning(f"AkinatorView button '{item.label}' callback error: {error}")
 
 
 # --- E-FAMILY HELPERS ---
@@ -2168,6 +2501,538 @@ async def on_message(message):
                         await message.reply("something went wrong while generating the ship image 😭")
                 return
 
+            elif command in ["wanted", "bounty"]:
+                target = message.mentions[0] if message.mentions else message.author
+                async with message.channel.typing():
+                    try:
+                        avatar_url = target.avatar.url if target.avatar else target.default_avatar.url
+                        async with aiohttp.ClientSession() as session:
+                            async with session.get(avatar_url) as resp:
+                                if resp.status != 200:
+                                    await message.reply("couldn't fetch the user avatar 😭")
+                                    return
+                                avatar_bytes = await resp.read()
+                        
+                        avatar_img = Image.open(io.BytesIO(avatar_bytes)).convert("RGBA")
+                        base = Image.new("RGBA", (600, 800), (235, 215, 180, 255))
+                        from PIL import ImageDraw, ImageFont, ImageOps
+                        draw = ImageDraw.Draw(base)
+                        
+                        for _ in range(15):
+                            y_line = random.randint(30, 770)
+                            draw.line([(20, y_line), (580, y_line)], fill=(220, 200, 165, 120), width=1)
+                        
+                        draw.rectangle([10, 10, 590, 790], outline=(70, 40, 20, 255), width=8)
+                        draw.rectangle([20, 20, 580, 780], outline=(70, 40, 20, 255), width=2)
+                        
+                        font_path = "C:\\Windows\\Fonts\\impact.ttf"
+                        try:
+                            font_wanted = ImageFont.truetype(font_path, 80)
+                            font_sub = ImageFont.truetype(font_path, 32)
+                            font_name = ImageFont.truetype(font_path, 42)
+                            font_bounty = ImageFont.truetype(font_path, 48)
+                        except:
+                            font_wanted = ImageFont.load_default()
+                            font_sub = ImageFont.load_default()
+                            font_name = ImageFont.load_default()
+                            font_bounty = ImageFont.load_default()
+                            
+                        def draw_centered_text(text, font, y, color=(70, 40, 20, 255)):
+                            try:
+                                bbox = draw.textbbox((0, 0), text, font=font)
+                                w = bbox[2] - bbox[0]
+                            except:
+                                w = len(text) * 10
+                            draw.text(((600 - w) // 2, y), text, fill=color, font=font)
+                            
+                        draw_centered_text("WANTED", font_wanted, 30)
+                        draw_centered_text("DEAD OR ALIVE", font_sub, 120)
+                        
+                        avatar_resized = avatar_img.resize((360, 360), Image.Resampling.LANCZOS)
+                        avatar_gray = avatar_resized.convert("L")
+                        avatar_vintage = ImageOps.colorize(avatar_gray, black=(45, 25, 12), white=(238, 220, 188))
+                        
+                        base.paste(avatar_vintage, (120, 180))
+                        draw.rectangle([115, 175, 485, 545], outline=(70, 40, 20, 255), width=5)
+                        
+                        random.seed(target.id)
+                        bounty_val = random.randint(50, 3000) * 1000000
+                        random.seed()
+                        
+                        bounty_str = f"฿ {bounty_val:,} -"
+                        
+                        name_text = target.display_name.upper()
+                        draw_centered_text(name_text, font_name, 580)
+                        draw_centered_text("REWARD", font_sub, 645)
+                        draw_centered_text(bounty_str, font_bounty, 690)
+                        
+                        out_io = io.BytesIO()
+                        base.save(out_io, format="PNG")
+                        out_io.seek(0)
+                        
+                        embed = discord.Embed(
+                            title=f"🏴‍☠️ WANTED: {target.display_name} 🏴‍☠️",
+                            color=discord.Color.from_rgb(139, 69, 19)
+                        )
+                        file = discord.File(out_io, filename="wanted.png")
+                        embed.set_image(url="attachment://wanted.png")
+                        await message.reply(file=file, embed=embed)
+                    except Exception as err:
+                        logger.error(f"Wanted command failed: {err}")
+                        await message.reply("something went wrong while generating the wanted poster 😭")
+                return
+
+            elif command == "gay":
+                target = message.mentions[0] if message.mentions else message.author
+                percent = random.randint(0, 100)
+                
+                if percent >= 80:
+                    comment = "absolutely rainbow tier, 100% gay 💅🌈"
+                elif percent >= 50:
+                    comment = "getting pretty fruity here 👀🏳️‍🌈"
+                elif percent >= 20:
+                    comment = "moderate levels of gayness detected 🧐"
+                else:
+                    comment = "basically straight, touch grass 🥱"
+                    
+                embed = discord.Embed(
+                    title="🌈 Gayrate Calculator 🌈",
+                    description=f"**{target.display_name}** is **{percent}%** gay!\n*{comment}*",
+                    color=discord.Color.from_rgb(255, 105, 180)
+                )
+                await message.reply(embed=embed)
+                return
+
+            elif command == "lesbian":
+                target = message.mentions[0] if message.mentions else message.author
+                percent = random.randint(0, 100)
+                
+                if percent >= 80:
+                    comment = "full lesbian energy, 100% peak girlpower 💅👭"
+                elif percent >= 50:
+                    comment = "pretty fruity vibes detected 👀👭"
+                elif percent >= 20:
+                    comment = "slight lesbian tendencies detected 🧐"
+                else:
+                    comment = "basically straight 🥱"
+                    
+                embed = discord.Embed(
+                    title="👩‍❤️‍👩 Lesbianrate Calculator 👩‍❤️‍👩",
+                    description=f"**{target.display_name}** is **{percent}%** lesbian!\n*{comment}*",
+                    color=discord.Color.from_rgb(255, 192, 203)
+                )
+                await message.reply(embed=embed)
+                return
+
+            elif command in ["gandhi", "fakequote"]:
+                if not args:
+                    await message.reply("you need to provide some quote text, dummy 🙄 (limit: 200 chars)")
+                    return
+                
+                text = args[:200].strip()
+                async with message.channel.typing():
+                    try:
+                        bg_path = "b:\\Discord bots\\Makima-chatbot\\assets\\memes\\gandhi.jpg"
+                        bg = Image.open(bg_path).convert("RGBA")
+                        from PIL import ImageDraw, ImageFont
+                        draw = ImageDraw.Draw(bg)
+                        
+                        W, H = bg.size
+                        font_size = max(18, int(H * 0.065))
+                        author_size = max(14, int(H * 0.05))
+                        
+                        try:
+                            font_quote = ImageFont.truetype("C:\\Windows\\Fonts\\georgiai.ttf", font_size)
+                            font_author = ImageFont.truetype("C:\\Windows\\Fonts\\georgia.ttf", author_size)
+                        except:
+                            font_quote = ImageFont.load_default()
+                            font_author = ImageFont.load_default()
+                            
+                        x_start = int(W * 0.46)
+                        max_width = int(W - x_start - 60)
+                        
+                        words = text.split()
+                        lines = []
+                        current_line = []
+                        for word in words:
+                            test_line = " ".join(current_line + [word])
+                            try:
+                                bbox = draw.textbbox((0, 0), test_line, font=font_quote)
+                                w = bbox[2] - bbox[0]
+                            except:
+                                w = len(test_line) * (font_size * 0.5)
+                            if w <= max_width:
+                                current_line.append(word)
+                            else:
+                                if current_line:
+                                    lines.append(" ".join(current_line))
+                                current_line = [word]
+                        if current_line:
+                            lines.append(" ".join(current_line))
+                            
+                        line_spacing = int(font_size * 0.3)
+                        line_heights = []
+                        for line in lines:
+                            try:
+                                bbox = draw.textbbox((0, 0), line, font=font_quote)
+                                h = bbox[3] - bbox[1]
+                            except:
+                                h = font_size
+                            line_heights.append(h)
+                            
+                        total_lines_height = sum(line_heights) + line_spacing * (len(lines) - 1)
+                        author_text = f"— {message.author.display_name}"
+                        try:
+                            bbox_auth = draw.textbbox((0, 0), author_text, font=font_author)
+                            author_w = bbox_auth[2] - bbox_auth[0]
+                            author_h = bbox_auth[3] - bbox_auth[1]
+                        except:
+                            author_w = len(author_text) * (author_size * 0.5)
+                            author_h = author_size
+                            
+                        total_block_height = total_lines_height + line_spacing * 2 + author_h
+                        y_start = (H - total_block_height) // 2
+                        
+                        y_current = y_start
+                        quote_color = (245, 235, 215, 255)
+                        
+                        for idx, line in enumerate(lines):
+                            display_line = line
+                            if idx == 0:
+                                display_line = f'"{display_line}'
+                            if idx == len(lines) - 1:
+                                display_line = f'{display_line}"'
+                                
+                            draw.text((x_start, y_current), display_line, fill=quote_color, font=font_quote)
+                            y_current += line_heights[idx] + line_spacing
+                            
+                        x_author = W - 60 - author_w
+                        draw.text((x_author, y_current + line_spacing), author_text, fill=(210, 190, 160, 255), font=font_author)
+                        
+                        out_io = io.BytesIO()
+                        bg.save(out_io, format="PNG")
+                        out_io.seek(0)
+                        
+                        file = discord.File(out_io, filename="gandhi_quote.png")
+                        await message.reply(file=file)
+                    except Exception as err:
+                        logger.error(f"Gandhi quote command failed: {err}")
+                        await message.reply("something went wrong while generating the quote image 😭")
+                return
+
+            elif command == "impersonate":
+                if not message.author.guild_permissions.manage_messages:
+                    await message.reply("you don't have permission to use this command, dummy 🙄", delete_after=5)
+                    try:
+                        await message.delete()
+                    except:
+                        pass
+                    return
+
+                if not message.mentions:
+                    await message.reply("you need to mention who you want to impersonate, dummy 🙄", delete_after=5)
+                    try:
+                        await message.delete()
+                    except:
+                        pass
+                    return
+
+                target_member = message.mentions[0]
+                mention_str = f"<@{target_member.id}>"
+                mention_nick_str = f"<@!{target_member.id}>"
+                text = args
+                if mention_str in text:
+                    text = text.replace(mention_str, "", 1)
+                elif mention_nick_str in text:
+                    text = text.replace(mention_nick_str, "", 1)
+                else:
+                    words = text.split()
+                    for word in words:
+                        if word.startswith("<@") and word.endswith(">"):
+                            text = text.replace(word, "", 1)
+                            break
+
+                text = text.strip()
+                if not text:
+                    await message.reply("what do you want them to say? provide some text! 🙄", delete_after=5)
+                    try:
+                        await message.delete()
+                    except:
+                        pass
+                    return
+
+                try:
+                    await message.delete()
+                except Exception:
+                    pass
+
+                webhook = None
+                try:
+                    webhook = await message.channel.create_webhook(name=f"Reze-Impersonate-{random.randint(1000, 9999)}")
+                    
+                    avatar_url = None
+                    if hasattr(target_member, "display_avatar") and target_member.display_avatar:
+                        avatar_url = target_member.display_avatar.url
+                    elif hasattr(target_member, "avatar") and target_member.avatar:
+                        avatar_url = target_member.avatar.url
+                    else:
+                        avatar_url = target_member.default_avatar.url
+
+                    await webhook.send(
+                        content=text,
+                        username=target_member.display_name,
+                        avatar_url=avatar_url
+                    )
+                except discord.Forbidden:
+                    await message.channel.send("i don't have permission to manage webhooks in this channel! 😭", delete_after=5)
+                except Exception as e:
+                    logger.error(f"Impersonate command failed: {e}")
+                    await message.channel.send("something went wrong while trying to impersonate 😭", delete_after=5)
+                finally:
+                    if webhook:
+                        try:
+                            await webhook.delete()
+                        except Exception:
+                            pass
+                return
+
+            elif command == "jail":
+                target = message.mentions[0] if message.mentions else message.author
+                async with message.channel.typing():
+                    try:
+                        avatar_url = target.avatar.url if target.avatar else target.default_avatar.url
+                        async with aiohttp.ClientSession() as session:
+                            async with session.get(avatar_url) as resp:
+                                if resp.status != 200:
+                                    await message.reply("couldn't fetch the user avatar 😭")
+                                    return
+                                avatar_bytes = await resp.read()
+                        
+                        avatar_img = Image.open(io.BytesIO(avatar_bytes)).convert("RGBA")
+                        avatar_resized = avatar_img.resize((360, 360), Image.Resampling.LANCZOS)
+                        avatar_gray = avatar_resized.convert("L").convert("RGBA")
+                        
+                        overlay = Image.new("RGBA", (360, 360), (0, 0, 0, 0))
+                        from PIL import ImageDraw
+                        draw_bars = ImageDraw.Draw(overlay)
+                        
+                        bar_width = 12
+                        spacing = 50
+                        for x in range(30, 360, spacing):
+                            draw_bars.rectangle([x - 1, 0, x + bar_width + 1, 360], fill=(0, 0, 0, 150))
+                            draw_bars.rectangle([x, 0, x + bar_width, 360], fill=(50, 50, 50, 255))
+                            draw_bars.line([(x + 3, 0), (x + 3, 360)], fill=(100, 100, 100, 255), width=2)
+                            
+                        for y in [80, 280]:
+                            draw_bars.rectangle([0, y - 1, 360, y + bar_width + 1], fill=(0, 0, 0, 150))
+                            draw_bars.rectangle([0, y, 360, y + bar_width], fill=(50, 50, 50, 255))
+                            draw_bars.line([(0, y + 3), (360, y + 3)], fill=(100, 100, 100, 255), width=2)
+                            
+                        jailed_img = Image.alpha_composite(avatar_gray, overlay)
+                        
+                        out_io = io.BytesIO()
+                        jailed_img.save(out_io, format="PNG")
+                        out_io.seek(0)
+                        
+                        embed = discord.Embed(
+                            title="🔒 JAILED! 🔒",
+                            description=f"**{target.display_name}** has been locked up for crimes against humanity! 👮‍♂️",
+                            color=discord.Color.from_rgb(40, 40, 40)
+                        )
+                        file = discord.File(out_io, filename="jailed.png")
+                        embed.set_image(url="attachment://jailed.png")
+                        await message.reply(file=file, embed=embed)
+                    except Exception as err:
+                        logger.error(f"Jail command failed: {err}")
+                        await message.reply("something went wrong while putting them in jail 😭")
+                return
+
+            elif command == "rip":
+                target = message.mentions[0] if message.mentions else message.author
+                
+                # Parse reason/epitaph
+                reason = args.strip()
+                if message.mentions:
+                    # Remove target user's mention from the start or end of args
+                    mention_str = f"<@{target.id}>"
+                    mention_nick_str = f"<@!{target.id}>"
+                    if reason.startswith(mention_str):
+                        reason = reason[len(mention_str):].strip()
+                    elif reason.startswith(mention_nick_str):
+                        reason = reason[len(mention_nick_str):].strip()
+                    else:
+                        # Fallback: remove first mention-like string in the text
+                        words = reason.split()
+                        for word in words:
+                            if word.startswith("<@") and word.endswith(">"):
+                                reason = reason.replace(word, "", 1).strip()
+                                break
+
+                # Set epitaph text
+                default_epitaphs = [
+                    "Died of skill issue",
+                    "Ratioed by life",
+                    "Forgot to use a defensive",
+                    "Tried to solo the boss",
+                    "No maids? No life.",
+                    "L + Ratio + Rip",
+                    "Died from cringe",
+                    "A tragic victim of the gacha",
+                    "Disconnected from the server",
+                    "Fallen in battle",
+                    "Wasted",
+                    "Died doing what they loved: spamming",
+                    "Rest in pieces",
+                    "Landed on the wrong planet",
+                    "Forgot how to breathe",
+                    "Victim of a bad internet connection",
+                    "Choked on water",
+                    "Defeated by a minor mob"
+                ]
+                
+                if reason:
+                    if not (reason.startswith('"') and reason.endswith('"')):
+                        epitaph_text = f'"{reason}"'
+                    else:
+                        epitaph_text = reason
+                else:
+                    epitaph_text = f'"{random.choice(default_epitaphs)}"'
+
+                async with message.channel.typing():
+                    try:
+                        avatar_url = target.avatar.url if target.avatar else target.default_avatar.url
+                        async with aiohttp.ClientSession() as session:
+                            async with session.get(avatar_url) as resp:
+                                if resp.status != 200:
+                                    await message.reply("couldn't fetch the user avatar 😭")
+                                    return
+                                avatar_bytes = await resp.read()
+                                
+                        # Process image
+                        template_path = "b:\\Discord bots\\Makima-chatbot\\assets\\memes\\rip.webp"
+                        img = Image.open(template_path).convert("RGBA")
+                        
+                        # Scale up by 4x for high quality text and drawings
+                        from PIL import ImageDraw, ImageFont, ImageOps
+                        scale = 4
+                        width, height = img.width * scale, img.height * scale
+                        img_scaled = img.resize((width, height), Image.Resampling.LANCZOS)
+                        draw = ImageDraw.Draw(img_scaled)
+                        
+                        # Load user's avatar
+                        avatar_img = Image.open(io.BytesIO(avatar_bytes)).convert("RGBA")
+                        avatar_size = 120
+                        avatar_resized = avatar_img.resize((avatar_size, avatar_size), Image.Resampling.LANCZOS)
+                        
+                        # Apply grayscale filter to avatar (matching gravestone theme)
+                        avatar_gray = ImageOps.grayscale(avatar_resized).convert("RGBA")
+                        
+                        # Round avatar
+                        mask = Image.new("L", (avatar_size, avatar_size), 0)
+                        mask_draw = ImageDraw.Draw(mask)
+                        mask_draw.ellipse([0, 0, avatar_size, avatar_size], fill=255)
+                        
+                        # Paste avatar on tombstone
+                        av_x = 470 - (avatar_size // 2)
+                        av_y = 610
+                        img_scaled.paste(avatar_gray, (av_x, av_y), mask=mask)
+                        
+                        # Try loading serif fonts
+                        try:
+                            font_rip = ImageFont.truetype("timesbd.ttf", 48)
+                            font_name = ImageFont.truetype("timesbd.ttf", 36)
+                            font_text = ImageFont.truetype("georgiai.ttf", 26)
+                        except Exception:
+                            try:
+                                font_rip = ImageFont.truetype("times.ttf", 48)
+                                font_name = ImageFont.truetype("times.ttf", 36)
+                                font_text = ImageFont.truetype("timesi.ttf", 26)
+                            except Exception:
+                                font_rip = ImageFont.load_default()
+                                font_name = ImageFont.load_default()
+                                font_text = ImageFont.load_default()
+                                
+                        text_color = (40, 50, 45, 240)
+                        
+                        # Draw static RIP header
+                        draw.text((470, 755), "R.I.P.", fill=text_color, font=font_rip, anchor="mm")
+                        
+                        # Draw display name (capped to fit)
+                        display_name = target.display_name
+                        if len(display_name) > 20:
+                            display_name = display_name[:17] + "..."
+                        draw.text((470, 810), display_name, fill=text_color, font=font_name, anchor="mm")
+                        
+                        # Draw dates: [Account creation year] - [Current year]
+                        birth_year = target.created_at.year
+                        death_year = datetime.now(timezone.utc).year
+                        draw.text((470, 860), f"{birth_year} - {death_year}", fill=text_color, font=font_text, anchor="mm")
+                        
+                        # Wrap and draw epitaph text
+                        max_text_width = 420
+                        words = epitaph_text.split()
+                        lines = []
+                        current_line = []
+                        for word in words:
+                            test_line = " ".join(current_line + [word])
+                            try:
+                                bbox = draw.textbbox((0, 0), test_line, font=font_text)
+                                w = bbox[2] - bbox[0]
+                            except Exception:
+                                w = len(test_line) * 13
+                            if w <= max_text_width:
+                                current_line.append(word)
+                            else:
+                                if current_line:
+                                    lines.append(" ".join(current_line))
+                                current_line = [word]
+                        if current_line:
+                            lines.append(" ".join(current_line))
+                            
+                        y_start = 915
+                        line_spacing = 30
+                        for idx, line in enumerate(lines[:3]):
+                            draw.text((470, y_start + idx * line_spacing), line, fill=text_color, font=font_text, anchor="mm")
+                            
+                        # Save and reply
+                        out_io = io.BytesIO()
+                        img_scaled.save(out_io, format="PNG")
+                        out_io.seek(0)
+                        
+                        embed = discord.Embed(
+                            title="🪦 Rest In Peace 🪦",
+                            description=f"We gather here today to mourn the loss of **{target.mention}**...",
+                            color=discord.Color.from_rgb(120, 120, 120)
+                        )
+                        file = discord.File(out_io, filename="rip.png")
+                        embed.set_image(url="attachment://rip.png")
+                        await message.reply(file=file, embed=embed)
+                        
+                    except Exception as err:
+                        logger.error(f"RIP command failed: {err}")
+                        await message.reply("something went wrong while putting them to rest 😭")
+                return
+
+            elif command == "akinator":
+                async with message.channel.typing():
+                    try:
+                        view = AkinatorView(message.author)
+                        question = await view.start()
+                        
+                        embed = discord.Embed(
+                            title="🔮 Akinator (Question 1) 🔮",
+                            description=f"### {question}",
+                            color=discord.Color.from_rgb(212, 175, 230)
+                        )
+                        embed.set_footer(text=f"Progression: 0% | Playing: {message.author.display_name}")
+                        
+                        reply_msg = await message.reply(embed=embed, view=view)
+                        view.message = reply_msg
+                    except Exception as e:
+                        logger.error(f"Akinator start error: {e}")
+                        await message.reply("couldn't start the Akinator game right now 😭")
+                return
+
             elif command in ["anime", "manga"]:
                 is_manga = command == "manga"
                 api_type = "manga" if is_manga else "anime"
@@ -2275,7 +3140,7 @@ async def on_message(message):
                                     img_url = data.get("coverImage", {}).get("large")
                                     
                                     embed = discord.Embed(
-                                        title=f"🌸 {title} 🌸",
+                                        title=title,
                                         url=site_url,
                                         description=clean_desc,
                                         color=discord.Color.from_rgb(255, 182, 193)
@@ -2525,44 +3390,177 @@ async def on_message(message):
 
             elif command in ["waifu", "husbando"]:
                 async with message.channel.typing():
-                    try:
-                        url = f"https://nekos.best/api/v2/{command}"
-                        headers = {"User-Agent": "MakimaChatbot/1.0"}
-                        async with aiohttp.ClientSession() as session:
-                            async with session.get(url, headers=headers) as resp:
-                                if resp.status == 200:
-                                    res_data = await resp.json()
-                                    item = res_data["results"][0]
-                                    img_url = item["url"]
-                                    
-                                    artist_name = item.get("artist_name")
-                                    artist_href = item.get("artist_href")
-                                    source_url = item.get("source_url")
-                                    
-                                    desc_parts = []
-                                    if artist_name:
-                                        if artist_href:
-                                            desc_parts.append(f"🎨 **Artist:** [{artist_name}]({artist_href})")
-                                        else:
-                                            desc_parts.append(f"🎨 **Artist:** **{artist_name}**")
-                                    if source_url:
-                                        desc_parts.append(f"🔗 **Source:** [Artwork Link]({source_url})")
+                    import urllib.parse
+                    character_found = False
+                    for _ in range(3):
+                        try:
+                            random_page = random.randint(1, 120)
+                            query = """
+                            query ($page: Int, $perPage: Int) {
+                              Page (page: $page, perPage: $perPage) {
+                                characters (sort: FAVOURITES_DESC) {
+                                  id
+                                  name {
+                                    full
+                                    native
+                                  }
+                                  image {
+                                    large
+                                  }
+                                  description
+                                  gender
+                                  dateOfBirth {
+                                    year
+                                    month
+                                    day
+                                  }
+                                  media (type: ANIME, sort: POPULARITY_DESC, perPage: 1) {
+                                    nodes {
+                                      title {
+                                        romaji
+                                        english
+                                      }
+                                      siteUrl
+                                    }
+                                  }
+                                  siteUrl
+                                }
+                              }
+                            }
+                            """
+                            variables = {"page": random_page, "perPage": 50}
+                            url = "https://graphql.anilist.co"
+                            
+                            async with aiohttp.ClientSession() as session:
+                                async with session.post(url, json={"query": query, "variables": variables}) as resp:
+                                    if resp.status == 200:
+                                        res_data = await resp.json()
+                                        characters = res_data.get("data", {}).get("Page", {}).get("characters", [])
                                         
-                                    description = "\n".join(desc_parts) if desc_parts else "A beautiful anime artwork chosen just for you! ✨"
-                                    
-                                    embed = discord.Embed(
-                                        title=f"🌸 Your random {command} 🌸",
-                                        description=description,
-                                        color=discord.Color.from_rgb(255, 182, 193)
-                                    )
-                                    embed.set_image(url=img_url)
-                                    embed.set_footer(text="Powered by nekos.best | Reze bot")
-                                    await message.reply(embed=embed)
-                                else:
-                                    await message.reply(f"couldn't fetch any {command} right now 😭")
-                    except Exception as e:
-                        logger.error(f"Waifu/Husbando command failed: {e}")
-                        await message.reply("something went wrong while fetching 😭")
+                                        target_gender = "female" if command == "waifu" else "male"
+                                        filtered = [
+                                            c for c in characters 
+                                            if c.get("gender") and c["gender"].strip().lower() == target_gender
+                                        ]
+                                        
+                                        if filtered:
+                                            char = random.choice(filtered)
+                                            full_name = char.get("name", {}).get("full") or "Unknown"
+                                            native_name = char.get("name", {}).get("native")
+                                            title = f"{full_name}"
+                                            if native_name:
+                                                title = f"{full_name} ({native_name})"
+                                                
+                                            anime_title = "Unknown Anime"
+                                            media_nodes = char.get("media", {}).get("nodes", [])
+                                            if media_nodes:
+                                                anime_title = media_nodes[0].get("title", {}).get("english") or media_nodes[0].get("title", {}).get("romaji") or "Unknown Anime"
+                                                
+                                            desc_raw = char.get("description") or ""
+                                            age = "Unknown"
+                                            if desc_raw:
+                                                clean_bio = re.sub(r'[~_*|]', '', desc_raw)
+                                                age_match = re.search(r'\b(?:age|aged)\s*(?:is|:)?\s*(\d+(?:\s*-\s*\d+)?)', clean_bio, re.IGNORECASE)
+                                                if age_match:
+                                                    age = age_match.group(1).strip()
+                                                else:
+                                                    age_match2 = re.search(r'\b(\d+(?:\s*-\s*\d+)?)\s*(?:years?\s*old|-years?-old|years?\s*of\s*age)', clean_bio, re.IGNORECASE)
+                                                    if age_match2:
+                                                        age = age_match2.group(1).strip()
+                                            
+                                            if age == "Unknown":
+                                                dob = char.get("dateOfBirth")
+                                                if dob and dob.get("year"):
+                                                    current_year = datetime.now().year
+                                                    age = str(current_year - dob["year"])
+                                            
+                                            # Default to AniList profile image
+                                            img_url = char.get("image", {}).get("large")
+                                            
+                                            # Attempt to fetch a stylish/fanart image of this character from Safebooru
+                                            words = [w.strip().lower() for w in full_name.split() if w.strip()]
+                                            words = [re.sub(r'[^a-z0-9_]', '', w) for w in words]
+                                            words = [w for w in words if w]
+                                            if words:
+                                                search_tags = " ".join(words)
+                                                safebooru_url = f"https://safebooru.org/index.php?page=dapi&s=post&q=index&json=1&limit=30&tags={urllib.parse.quote(search_tags)}"
+                                                try:
+                                                    async with session.get(safebooru_url) as sb_resp:
+                                                        if sb_resp.status == 200:
+                                                            posts = await sb_resp.json()
+                                                            if posts and isinstance(posts, list):
+                                                                post = random.choice(posts)
+                                                                sb_img = post.get("file_url")
+                                                                if sb_img:
+                                                                    if sb_img.startswith("//"):
+                                                                        sb_img = "https:" + sb_img
+                                                                    elif not sb_img.startswith("http"):
+                                                                        sb_img = "https://safebooru.org/" + sb_img.lstrip("/")
+                                                                    img_url = sb_img
+                                                except Exception as sb_err:
+                                                    logger.error(f"Failed to fetch stylish image from Safebooru: {sb_err}")
+                                            
+                                            embed = discord.Embed(
+                                                title=title,
+                                                url=char.get("siteUrl"),
+                                                color=discord.Color.from_rgb(255, 182, 193)
+                                            )
+                                            if img_url:
+                                                embed.set_image(url=img_url)
+                                                
+                                            embed.add_field(name="✨ Anime", value=f"**{anime_title}**", inline=True)
+                                            embed.add_field(name="🎂 Age", value=f"**{age}**", inline=True)
+                                            embed.set_footer(text="Powered by AniList | Reze bot")
+                                            
+                                            view = SmashPassView()
+                                            reply_msg = await message.reply(embed=embed, view=view)
+                                            view.message = reply_msg
+                                            character_found = True
+                                            break
+                        except Exception as e:
+                            logger.error(f"AniList waifu/husbando fetch attempt failed: {e}")
+                    
+                    if not character_found:
+                        try:
+                            url = f"https://nekos.best/api/v2/{command}"
+                            headers = {"User-Agent": "MakimaChatbot/1.0"}
+                            async with aiohttp.ClientSession() as session:
+                                async with session.get(url, headers=headers) as resp:
+                                    if resp.status == 200:
+                                        res_data = await resp.json()
+                                        item = res_data["results"][0]
+                                        img_url = item["url"]
+                                        
+                                        artist_name = item.get("artist_name")
+                                        artist_href = item.get("artist_href")
+                                        source_url = item.get("source_url")
+                                        
+                                        desc_parts = []
+                                        if artist_name:
+                                            if artist_href:
+                                                desc_parts.append(f"🎨 **Artist:** [{artist_name}]({artist_href})")
+                                            else:
+                                                desc_parts.append(f"🎨 **Artist:** **{artist_name}**")
+                                        if source_url:
+                                            desc_parts.append(f"🔗 **Source:** [Artwork Link]({source_url})")
+                                            
+                                        description = "\n".join(desc_parts) if desc_parts else "A beautiful anime artwork chosen just for you! ✨"
+                                        
+                                        embed = discord.Embed(
+                                            title=f"Your random {command}",
+                                            description=description,
+                                            color=discord.Color.from_rgb(255, 182, 193)
+                                        )
+                                        embed.set_image(url=img_url)
+                                        embed.set_footer(text="Powered by nekos.best | Reze bot")
+                                        view = SmashPassView()
+                                        reply_msg = await message.reply(embed=embed, view=view)
+                                        view.message = reply_msg
+                                    else:
+                                        await message.reply(f"couldn't fetch any {command} right now 😭")
+                        except Exception as e:
+                            logger.error(f"Waifu/Husbando command fallback failed: {e}")
+                            await message.reply("something went wrong while fetching 😭")
                 return
 
             elif command == "quote":
@@ -2612,7 +3610,7 @@ async def on_message(message):
                                         img_url = res_data["message"]
                                         
                                     embed = discord.Embed(
-                                        title=f"🌸 Random cute {command}! 🌸",
+                                        title=f"Random cute {command}!",
                                         color=discord.Color.from_rgb(255, 223, 186)
                                     )
                                     embed.set_image(url=img_url)
@@ -3003,7 +4001,7 @@ async def on_message(message):
             elif command in ["avatar", "av"]:
                 target = message.mentions[0] if message.mentions else message.author
                 embed = discord.Embed(
-                    title=f"🌸 {target.display_name}'s Avatar 🌸",
+                    title=f"{target.display_name}'s Avatar",
                     color=discord.Color.from_rgb(212, 175, 230)
                 )
                 if target.avatar:
