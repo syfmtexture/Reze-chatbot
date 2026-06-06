@@ -6,3 +6,5 @@ pymongo
 motor
 certifi
 Pillow
+akinator
+cloudscraper
