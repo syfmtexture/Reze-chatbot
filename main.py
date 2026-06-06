@@ -1606,7 +1606,7 @@ class AkinatorView(discord.ui.View):
             await interaction.followup.edit_message(message_id=self.message.id, embed=embed, view=self)
             
         except Exception as e:
-            logger.error(f"Akinator error: {e}")
+            logger.error(f"Akinator error: {e}", exc_info=True)
             await interaction.followup.send("something went wrong with the Akinator API 😭", ephemeral=True)
 
     @discord.ui.button(label="Yes", style=discord.ButtonStyle.success, row=0)
@@ -3029,7 +3029,7 @@ async def on_message(message):
                         reply_msg = await message.reply(embed=embed, view=view)
                         view.message = reply_msg
                     except Exception as e:
-                        logger.error(f"Akinator start error: {e}")
+                        logger.error(f"Akinator start error: {e}", exc_info=True)
                         await message.reply("couldn't start the Akinator game right now 😭")
                 return
 
