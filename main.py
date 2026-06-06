@@ -1520,6 +1520,20 @@ class SmashPassView(discord.ui.View):
             pass
 
 
+async def fetch_free_proxies():
+    url = "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=5000&country=all&ssl=yes&anonymity=anonymous"
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=5) as r:
+                if r.status == 200:
+                    text = await r.text()
+                    proxies = [line.strip() for line in text.split("\n") if line.strip()]
+                    return proxies
+    except Exception as e:
+        logger.warning(f"Failed to fetch proxies: {e}")
+    return []
+
+
 class AkinatorView(discord.ui.View):
     def __init__(self, author):
         super().__init__(timeout=90.0)
@@ -1532,8 +1546,44 @@ class AkinatorView(discord.ui.View):
                 child.disabled = True
         
     async def start(self):
-        await self.aki.start_game()
-        return self.aki.question
+        try:
+            # First attempt: direct connection
+            await self.aki.start_game()
+            return self.aki.question
+        except Exception as direct_err:
+            logger.warning(f"Direct connection to Akinator failed: {direct_err}. Attempting proxy fallback...")
+            
+            # Fetch free proxies
+            proxies = await fetch_free_proxies()
+            if not proxies:
+                raise direct_err
+                
+            # Try a random selection of proxies
+            import random
+            random.shuffle(proxies)
+            
+            # Attempt up to 5 proxies
+            for proxy_str in proxies[:6]:
+                proxy_url = f"http://{proxy_str}"
+                logger.info(f"Attempting Akinator proxy: {proxy_url}")
+                try:
+                    # Create a new AsyncAkinator instance to start clean
+                    self.aki = AsyncAkinator()
+                    self.aki.session.scraper.proxies = {
+                        "http": proxy_url,
+                        "https": proxy_url
+                    }
+                    self.aki.session.scraper.timeout = 5
+                    
+                    await self.aki.start_game()
+                    logger.info(f"Successfully bypassed Cloudflare using proxy: {proxy_url}")
+                    return self.aki.question
+                except Exception as proxy_err:
+                    logger.warning(f"Proxy {proxy_url} failed: {proxy_err}")
+                    continue
+            
+            # If all proxies fail, raise the original direct connection error
+            raise direct_err
 
     async def process_answer(self, interaction: discord.Interaction, answer_val):
         if interaction.user.id != self.author.id:
