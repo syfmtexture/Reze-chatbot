@@ -1269,7 +1269,8 @@ def get_help_embed(category: str, bot_user=None) -> discord.Embed:
             name="🎮 Games & AI",
             value="• `$akinator` ─ Play Akinator directly in chat using buttons.\n"
                   "• `$choose [opt1 | opt2]` ─ Let Reze choose between options.\n"
-                  "• `$quote` ─ Get a random anime quote.",
+                  "• `$quote [@user] [text] / [reply]` ─ Generate a premium cinematic quote card.\n"
+                  "• `$truth` / `$dare` ─ Play a game of Truth or Dare powered by AI (Llama 3.3).",
             inline=False
         )
         embed.add_field(
@@ -1277,7 +1278,10 @@ def get_help_embed(category: str, bot_user=None) -> discord.Embed:
             value="• `$wanted` / `$bounty` `[@user]` ─ Generate a One Piece wanted poster.\n"
                   "• `$jail [@user]` ─ Lock up a user behind photorealistic bars.\n"
                   "• `$rip [@user] [reason]` ─ Mourn a user with a customized gravestone meme.\n"
-                  "• `$gandhi` / `$fakequote` `[text]` ─ Generate a fake quote on a Gandhi background banner.",
+                  "• `$gandhi` / `$fakequote` `[text]` ─ Generate a fake quote on a Gandhi background banner.\n"
+                  "• `$simp [@user]` ─ Issue an official Certified Simp Card.\n"
+                  "• `$wasted [@user]` ─ Apply a GTA-style sepia red Wasted overlay.\n"
+                  "• `$trashcan` / `$trash` `[@user]` ─ Put a user's avatar in the trashcan.",
             inline=False
         )
         embed.add_field(
@@ -4399,12 +4403,13 @@ async def on_message(message):
                             bbox = draw.textbbox((0, 0), wasted_text, font=font_wasted)
                             w = bbox[2] - bbox[0]
                             h = bbox[3] - bbox[1]
+                            x_text = (600 - w) // 2 - bbox[0]
+                            y_text = 240 + (120 - h) // 2 - bbox[1]
                         except:
                             w = len(wasted_text) * 35
                             h = 60
-                            
-                        x_text = (600 - w) // 2
-                        y_text = 250 + (100 - h) // 2
+                            x_text = (600 - w) // 2
+                            y_text = 240 + (120 - h) // 2
                         
                         # Drop shadow
                         draw.text((x_text + 4, y_text + 4), wasted_text, fill=(0, 0, 0, 255), font=font_wasted)
