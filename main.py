@@ -3690,7 +3690,6 @@ async def on_message(message):
                         
                         # Process Quote Image
                         from PIL import ImageDraw, ImageFont, ImageOps
-                        import io
                         
                         # Solid dark background
                         bg_color = (15, 15, 18, 255)
@@ -4264,7 +4263,6 @@ async def on_message(message):
                                 avatar_bytes = await resp.read()
                         
                         from PIL import ImageDraw, ImageFont
-                        import io
                         
                         # Generate 600x400 card
                         card = Image.new("RGBA", (600, 400), (255, 182, 193, 255))
@@ -4377,7 +4375,6 @@ async def on_message(message):
                                 avatar_bytes = await resp.read()
                         
                         from PIL import ImageDraw, ImageFont, ImageOps
-                        import io
                         
                         # Load avatar and scale to 600x600
                         avatar_img = Image.open(io.BytesIO(avatar_bytes)).convert("RGBA")
@@ -4443,7 +4440,6 @@ async def on_message(message):
                                 avatar_bytes = await resp.read()
                         
                         from PIL import ImageDraw, ImageFont
-                        import io
                         
                         # Load local template
                         trash_path = os.path.join(BASE_DIR, "assets", "memes", "trashcan.webp")
