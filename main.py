@@ -4226,6 +4226,255 @@ async def on_message(message):
                 await message.reply(embed=embed)
                 return
 
+            elif command in ["truth", "dare"]:
+                async with message.channel.typing():
+                    try:
+                        content = await ai.get_truth_or_dare(command)
+                        
+                        embed_color = discord.Color.from_rgb(212, 175, 230) if command == "truth" else discord.Color.from_rgb(220, 20, 60)
+                        title_str = "🔮 Truth 🔮" if command == "truth" else "🔥 Dare 🔥"
+                        
+                        embed = discord.Embed(
+                            title=title_str,
+                            description=f"### {content}",
+                            color=embed_color
+                        )
+                        embed.set_footer(text=f"Requested by {message.author.display_name}")
+                        await message.reply(embed=embed)
+                    except Exception as e:
+                        logger.error(f"Failed to generate {command}: {e}", exc_info=True)
+                        await message.reply(f"couldn't get a {command} right now 😭")
+                return
+
+            elif command == "simp":
+                target = message.mentions[0] if message.mentions else message.author
+                async with message.channel.typing():
+                    try:
+                        # Fetch target avatar bytes
+                        avatar_url = target.avatar.url if target.avatar else target.default_avatar.url
+                        async with aiohttp.ClientSession() as session:
+                            async with session.get(avatar_url) as resp:
+                                if resp.status != 200:
+                                    await message.reply("couldn't fetch the user avatar 😭")
+                                    return
+                                avatar_bytes = await resp.read()
+                        
+                        from PIL import ImageDraw, ImageFont
+                        import io
+                        
+                        # Generate 600x400 card
+                        card = Image.new("RGBA", (600, 400), (255, 182, 193, 255))
+                        draw = ImageDraw.Draw(card)
+                        for y in range(400):
+                            r = int(255 - (75 * y / 400))
+                            g = int(182 - (162 * y / 400))
+                            b = int(193 - (133 * y / 400))
+                            draw.line([(0, y), (600, y)], fill=(r, g, b, 255))
+                        
+                        # Draw outline border
+                        draw.rectangle([10, 10, 590, 390], outline=(255, 255, 255, 200), width=4)
+                        
+                        # Load Fonts
+                        font_header_path = os.path.join(BASE_DIR, "assets", "fonts", "Anton-Regular.ttf")
+                        font_regular_path = os.path.join(BASE_DIR, "assets", "fonts", "Roboto-Bold.ttf")
+                        font_footer_path = os.path.join(BASE_DIR, "assets", "fonts", "CrimsonText-Italic.ttf")
+                        
+                        font_header = ImageFont.truetype(font_header_path, 42)
+                        font_regular = ImageFont.truetype(font_regular_path, 22)
+                        font_footer = ImageFont.truetype(font_footer_path, 20)
+                        
+                        # Draw Header
+                        header_text = "OFFICIAL CERTIFIED SIMP"
+                        try:
+                            bbox = draw.textbbox((0, 0), header_text, font=font_header)
+                            w = bbox[2] - bbox[0]
+                        except:
+                            w = len(header_text) * 20
+                        draw.text(((600 - w) // 2, 30), header_text, fill=(255, 255, 255, 255), font=font_header)
+                        
+                        # Load avatar and round it
+                        avatar_img = Image.open(io.BytesIO(avatar_bytes)).convert("RGBA")
+                        av_size = 140
+                        avatar_resized = avatar_img.resize((av_size, av_size), Image.Resampling.LANCZOS)
+                        
+                        mask = Image.new("L", (av_size, av_size), 0)
+                        mask_draw = ImageDraw.Draw(mask)
+                        mask_draw.ellipse([0, 0, av_size, av_size], fill=255)
+                        
+                        card.paste(avatar_resized, (50, 120), mask=mask)
+                        
+                        # Draw white border around avatar
+                        draw.ellipse([47, 117, 193, 263], outline=(255, 255, 255, 255), width=3)
+                        
+                        # Simp Level Logic (seed-based so same user gets same rating daily)
+                        import hashlib
+                        from datetime import date
+                        seed_str = f"{target.id}-{date.today()}"
+                        rating_hash = hashlib.sha256(seed_str.encode()).hexdigest()
+                        simp_rating = int(rating_hash, 16) % 101
+                        
+                        if simp_rating < 20:
+                            status = "Unmoved / Sigma"
+                            comment = "immune to charms. a rare breed."
+                        elif simp_rating < 50:
+                            status = "Casual Admirer"
+                            comment = "likes them, but keeps their cool."
+                        elif simp_rating < 80:
+                            status = "Certified Simp"
+                            comment = "definitely funding their lifestyle."
+                        else:
+                            status = "Terminal / Loyal Dog"
+                            comment = "woofs on command. completely gone."
+                        
+                        # Draw Simp Info
+                        name_text = f"Subject: {target.display_name}"
+                        rating_text = f"Simp Level: {simp_rating}%"
+                        status_text = f"Status: {status}"
+                        comment_text = f"\"{comment}\""
+                        
+                        draw.text((220, 120), name_text, fill=(255, 255, 255, 255), font=font_regular)
+                        draw.text((220, 160), rating_text, fill=(255, 255, 255, 255), font=font_regular)
+                        draw.text((220, 200), status_text, fill=(255, 255, 255, 255), font=font_regular)
+                        draw.text((220, 240), comment_text, fill=(255, 240, 245, 220), font=font_footer)
+                        
+                        # Draw Footer
+                        footer_text = "Approved by the Control Devil"
+                        try:
+                            bbox = draw.textbbox((0, 0), footer_text, font=font_footer)
+                            w = bbox[2] - bbox[0]
+                        except:
+                            w = len(footer_text) * 10
+                        draw.text(((600 - w) // 2, 330), footer_text, fill=(255, 255, 255, 180), font=font_footer)
+                        
+                        # Save and reply
+                        out_io = io.BytesIO()
+                        card.save(out_io, format="PNG")
+                        out_io.seek(0)
+                        
+                        file = discord.File(out_io, filename="simp_card.png")
+                        await message.reply(file=file)
+                        
+                    except Exception as err:
+                        logger.error(f"Simp command failed: {err}", exc_info=True)
+                        await message.reply("something went wrong while issuing the Simp Card 😭")
+                return
+
+            elif command == "wasted":
+                target = message.mentions[0] if message.mentions else message.author
+                async with message.channel.typing():
+                    try:
+                        # Fetch target avatar bytes
+                        avatar_url = target.avatar.url if target.avatar else target.default_avatar.url
+                        async with aiohttp.ClientSession() as session:
+                            async with session.get(avatar_url) as resp:
+                                if resp.status != 200:
+                                    await message.reply("couldn't fetch the user avatar 😭")
+                                    return
+                                avatar_bytes = await resp.read()
+                        
+                        from PIL import ImageDraw, ImageFont, ImageOps
+                        import io
+                        
+                        # Load avatar and scale to 600x600
+                        avatar_img = Image.open(io.BytesIO(avatar_bytes)).convert("RGBA")
+                        img = avatar_img.resize((600, 600), Image.Resampling.LANCZOS)
+                        
+                        # Convert to grayscale and tint reddish
+                        gray = ImageOps.grayscale(img)
+                        img = ImageOps.colorize(gray, black=(20, 10, 10), white=(240, 200, 200)).convert("RGBA")
+                        
+                        # Draw transparent black overlay bar
+                        overlay = Image.new("RGBA", (600, 600), (0, 0, 0, 0))
+                        overlay_draw = ImageDraw.Draw(overlay)
+                        overlay_draw.rectangle([0, 240, 600, 360], fill=(0, 0, 0, 160))
+                        img = Image.alpha_composite(img, overlay)
+                        
+                        # Draw WASTED text
+                        draw = ImageDraw.Draw(img)
+                        font_path = os.path.join(BASE_DIR, "assets", "fonts", "Anton-Regular.ttf")
+                        font_wasted = ImageFont.truetype(font_path, 76)
+                        
+                        wasted_text = "WASTED"
+                        try:
+                            bbox = draw.textbbox((0, 0), wasted_text, font=font_wasted)
+                            w = bbox[2] - bbox[0]
+                            h = bbox[3] - bbox[1]
+                        except:
+                            w = len(wasted_text) * 35
+                            h = 60
+                            
+                        x_text = (600 - w) // 2
+                        y_text = 250 + (100 - h) // 2
+                        
+                        # Drop shadow
+                        draw.text((x_text + 4, y_text + 4), wasted_text, fill=(0, 0, 0, 255), font=font_wasted)
+                        # Red text
+                        draw.text((x_text, y_text), wasted_text, fill=(180, 20, 20, 255), font=font_wasted)
+                        
+                        # Save and reply
+                        out_io = io.BytesIO()
+                        img.save(out_io, format="PNG")
+                        out_io.seek(0)
+                        
+                        file = discord.File(out_io, filename="wasted.png")
+                        await message.reply(file=file)
+                        
+                    except Exception as err:
+                        logger.error(f"Wasted command failed: {err}", exc_info=True)
+                        await message.reply("something went wrong while wasting them 😭")
+                return
+
+            elif command in ["trashcan", "trash"]:
+                target = message.mentions[0] if message.mentions else message.author
+                async with message.channel.typing():
+                    try:
+                        # Fetch target avatar bytes
+                        avatar_url = target.avatar.url if target.avatar else target.default_avatar.url
+                        async with aiohttp.ClientSession() as session:
+                            async with session.get(avatar_url) as resp:
+                                if resp.status != 200:
+                                    await message.reply("couldn't fetch the user avatar 😭")
+                                    return
+                                avatar_bytes = await resp.read()
+                        
+                        from PIL import ImageDraw, ImageFont
+                        import io
+                        
+                        # Load local template
+                        trash_path = os.path.join(BASE_DIR, "assets", "memes", "trashcan.webp")
+                        img = Image.open(trash_path).convert("RGBA")
+                        
+                        # Load avatar
+                        avatar_img = Image.open(io.BytesIO(avatar_bytes)).convert("RGBA")
+                        av_size = 140
+                        avatar_resized = avatar_img.resize((av_size, av_size), Image.Resampling.LANCZOS)
+                        
+                        # Round avatar
+                        mask = Image.new("L", (av_size, av_size), 0)
+                        mask_draw = ImageDraw.Draw(mask)
+                        mask_draw.ellipse([0, 0, av_size, av_size], fill=255)
+                        
+                        # Rotate avatar and mask to match the hand angle (-20 degrees)
+                        angle = -20
+                        av_rotated = avatar_resized.rotate(angle, expand=True, resample=Image.Resampling.BICUBIC)
+                        mask_rotated = mask.rotate(angle, expand=True, resample=Image.Resampling.BICUBIC)
+                        
+                        # Paste in hand coordinates (x=265, y=175)
+                        img.paste(av_rotated, (265, 175), mask=mask_rotated)
+                        
+                        # Save and reply
+                        out_io = io.BytesIO()
+                        img.save(out_io, format="PNG")
+                        out_io.seek(0)
+                        
+                        file = discord.File(out_io, filename="trashcan.png")
+                        await message.reply(file=file)
+                        
+                    except Exception as err:
+                        logger.error(f"Trashcan command failed: {err}", exc_info=True)
+                        await message.reply("something went wrong while putting them in the trash 😭")
+                return
+
             elif command in ACTIONS or command == "random":
                 action = command
                 if command == "random":

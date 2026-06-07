@@ -488,7 +488,7 @@ RULES:
         self.channel_state[channel_id]["recent_responses"].append(text[:150])
         self.channel_state[channel_id]["recent_responses"] = self.channel_state[channel_id]["recent_responses"][-3:]
 
-    async def _get_groq_response(self, prompt: str, system_prompt: str = None) -> str:
+    async def _get_groq_response(self, prompt: str, system_prompt: str = None, model: str = None) -> str:
         """Call Groq API with key rotation and fallback."""
         if not self.groq_api_keys:
             raise ValueError("No Groq API keys configured.")
@@ -499,8 +499,9 @@ RULES:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
         
+        model_name = model if model else self.groq_model
         payload = {
-            "model": self.groq_model,
+            "model": model_name,
             "messages": messages,
             "temperature": 0.5
         }
@@ -768,4 +769,52 @@ INSTRUCTIONS:
                 self._rotate_client()
                 continue
         return None
+
+    async def get_truth_or_dare(self, mode: str) -> str:
+        """Generates a truth or dare prompt using Llama, falling back to Qwen, then Gemini, then local list."""
+        if mode.lower() == "truth":
+            system_prompt = "You are a fun party game host."
+            prompt = "Generate a single, unique, fun, and slightly embarrassing 'Truth' question for a Discord game of Truth or Dare. It should be SFW and engaging for young adults. Return ONLY the question. No prefix, no quotation marks, no explanations."
+            default_fallback = random.choice([
+                "What is the most embarrassing thing you've done in public?",
+                "Who is your secret crush in this server?",
+                "What is your biggest fear?",
+                "What is the worst lie you've ever told?",
+                "What is your most useless talent?"
+            ])
+        else:
+            system_prompt = "You are a fun party game host."
+            prompt = "Generate a single, unique, fun, and harmless 'Dare' challenge that can be done on Discord (e.g. changing nickname, sending a funny message, singing in a voice note). It should be SFW and engaging for young adults. Return ONLY the dare task. No prefix, no quotation marks, no explanations."
+            default_fallback = random.choice([
+                "Change your nickname in this server to 'Makima's Loyal Dog' for 24 hours.",
+                "Send the 10th photo in your camera roll to this chat.",
+                "Bark like a dog in a voice channel for 10 seconds.",
+                "Describe your worst habit in detail.",
+                "Send a message to a random person in this server saying 'I know what you did last summer'."
+            ])
+
+        # Try Llama first
+        if self.groq_api_keys:
+            try:
+                # Use Llama 3.3 70B
+                return await self._get_groq_response(prompt, system_prompt, model="llama-3.3-70b-versatile")
+            except Exception as e:
+                print(f"Llama truth/dare generation failed: {e}. Trying Qwen fallback...")
+                try:
+                    # Fallback to Qwen 2.5 32B
+                    return await self._get_groq_response(prompt, system_prompt, model="qwen-2.5-32b-instruct")
+                except Exception as e2:
+                    print(f"Qwen fallback failed: {e2}. Trying Gemini fallback...")
+
+        # Try Gemini fallback
+        try:
+            client = self._get_current_client()
+            response = await client.aio.models.generate_content(
+                model=self.model,
+                contents=prompt
+            )
+            return response.text.strip().strip('*\"\' ')
+        except Exception as e3:
+            print(f"Gemini fallback failed: {e3}. Using local fallback.")
+            return default_fallback
 
