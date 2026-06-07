@@ -3629,32 +3629,160 @@ async def on_message(message):
                 return
 
             elif command == "quote":
+                # Parse target and text
+                target = None
+                quote_text = ""
+                
+                # 1. Check if replying to a message
+                if message.reference and message.reference.message_id:
+                    try:
+                        ref_msg = await message.channel.fetch_message(message.reference.message_id)
+                        target = ref_msg.author
+                        quote_text = ref_msg.content
+                    except Exception:
+                        pass
+                
+                # 2. Check if user is mentioned
+                if message.mentions:
+                    target = message.mentions[0]
+                
+                # 3. Check if text args are provided
+                if args.strip():
+                    parsed_text = args.strip()
+                    if message.mentions:
+                        mention_str = f"<@{target.id}>"
+                        mention_nick_str = f"<@!{target.id}>"
+                        if parsed_text.startswith(mention_str):
+                            parsed_text = parsed_text[len(mention_str):].strip()
+                        elif parsed_text.startswith(mention_nick_str):
+                            parsed_text = parsed_text[len(mention_nick_str):].strip()
+                        else:
+                            words = parsed_text.split()
+                            for word in words:
+                                if word.startswith("<@") and word.endswith(">"):
+                                    parsed_text = parsed_text.replace(word, "", 1).strip()
+                                    break
+                    if parsed_text:
+                        quote_text = parsed_text
+                
+                # Fallback to message author
+                if not target:
+                    target = message.author
+                
+                if not quote_text:
+                    await message.reply("you need to provide a quote or reply to a message, dummy 🙄")
+                    return
+                
                 async with message.channel.typing():
                     try:
-                        url = "https://api.animechan.io/v1/quotes/random"
+                        # Fetch target avatar bytes
+                        avatar_url = target.avatar.url if target.avatar else target.default_avatar.url
                         async with aiohttp.ClientSession() as session:
-                            async with session.get(url) as resp:
-                                if resp.status == 200:
-                                    res_data = await resp.json()
-                                    if res_data.get("status") == "success" and "data" in res_data:
-                                        quote_data = res_data["data"]
-                                        content = quote_data["content"]
-                                        anime_name = quote_data["anime"]["name"]
-                                        char_name = quote_data["character"]["name"]
-                                        
-                                        embed = discord.Embed(
-                                            description=f"*\"{content}\"*",
-                                            color=discord.Color.from_rgb(212, 175, 230)
-                                        )
-                                        embed.set_footer(text=f"— {char_name} ({anime_name})")
-                                        await message.reply(embed=embed)
-                                    else:
-                                        await message.reply("couldn't fetch an anime quote right now 😭")
-                                else:
-                                    await message.reply("anime quote api is down or rate-limited 🙄")
-                    except Exception as e:
-                        logger.error(f"Quote command failed: {e}")
-                        await message.reply("something went wrong while fetching a quote 😭")
+                            async with session.get(avatar_url) as resp:
+                                if resp.status != 200:
+                                    await message.reply("couldn't fetch the user avatar 😭")
+                                    return
+                                avatar_bytes = await resp.read()
+                        
+                        # Process Quote Image
+                        from PIL import ImageDraw, ImageFont, ImageOps
+                        import io
+                        
+                        # Solid dark background
+                        bg_color = (15, 15, 18, 255)
+                        img = Image.new("RGBA", (800, 300), bg_color)
+                        
+                        # Paste avatar on the left
+                        avatar_img = Image.open(io.BytesIO(avatar_bytes)).convert("RGBA")
+                        avatar_resized = avatar_img.resize((300, 300), Image.Resampling.LANCZOS)
+                        img.paste(avatar_resized, (0, 0))
+                        
+                        # Apply horizontal black fade from x=100 to x=280 to blend into the solid background
+                        gradient = Image.new("RGBA", (300, 300), (0, 0, 0, 0))
+                        grad_draw = ImageDraw.Draw(gradient)
+                        for x in range(300):
+                            if x < 100:
+                                alpha = 0
+                            elif x < 280:
+                                alpha = int(255 * (x - 100) / 180)
+                            else:
+                                alpha = 255
+                            grad_draw.line([(x, 0), (x, 300)], fill=(15, 15, 18, alpha))
+                        img.paste(gradient, (0, 0), mask=gradient)
+                        
+                        # Draw outline border
+                        draw = ImageDraw.Draw(img)
+                        draw.rectangle([5, 5, 795, 295], outline=(212, 175, 230, 60), width=2)
+                        
+                        # Load Fonts
+                        font_quote_path = os.path.join(BASE_DIR, "assets", "fonts", "CrimsonText-Italic.ttf")
+                        font_author_path = os.path.join(BASE_DIR, "assets", "fonts", "Roboto-Regular.ttf")
+                        
+                        full_quote = f'“ {quote_text} ”'
+                        
+                        # Adjust font size dynamically based on length
+                        quote_len = len(full_quote)
+                        if quote_len > 150:
+                            quote_font_size = 20
+                            line_spacing = 26
+                        elif quote_len > 80:
+                            quote_font_size = 24
+                            line_spacing = 30
+                        else:
+                            quote_font_size = 28
+                            line_spacing = 36
+                            
+                        font_quote = ImageFont.truetype(font_quote_path, quote_font_size)
+                        font_author = ImageFont.truetype(font_author_path, 18)
+                        
+                        # Wrap quote text (width limit: 440px)
+                        max_text_width = 440
+                        words = full_quote.split()
+                        lines = []
+                        current_line = []
+                        for word in words:
+                            test_line = " ".join(current_line + [word])
+                            try:
+                                bbox = draw.textbbox((0, 0), test_line, font=font_quote)
+                                w = bbox[2] - bbox[0]
+                            except Exception:
+                                w = len(test_line) * (quote_font_size * 0.5)
+                            if w <= max_text_width:
+                                current_line.append(word)
+                            else:
+                                if current_line:
+                                    lines.append(" ".join(current_line))
+                                current_line = [word]
+                        if current_line:
+                            lines.append(" ".join(current_line))
+                        
+                        # Center block vertically on the right side
+                        total_text_height = len(lines) * line_spacing
+                        author_height = 24
+                        total_block_height = total_text_height + 15 + author_height
+                        start_y = (300 - total_block_height) // 2
+                        
+                        # Draw quote lines
+                        current_y = start_y
+                        for line in lines:
+                            draw.text((320, current_y), line, fill=(245, 240, 250, 255), font=font_quote)
+                            current_y += line_spacing
+                            
+                        # Draw author name
+                        author_text = f"— {target.display_name}"
+                        draw.text((320, current_y + 15), author_text, fill=(212, 175, 230, 255), font=font_author)
+                        
+                        # Save and reply
+                        out_io = io.BytesIO()
+                        img.save(out_io, format="PNG")
+                        out_io.seek(0)
+                        
+                        file = discord.File(out_io, filename="quote.png")
+                        await message.reply(file=file)
+                        
+                    except Exception as err:
+                        logger.error(f"Quote command failed: {err}", exc_info=True)
+                        await message.reply("something went wrong while generating the quote card 😭")
                 return
 
             elif command in ["cat", "dog"]:
