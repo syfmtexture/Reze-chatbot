@@ -1,5 +1,7 @@
 import os
 import sys
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 import discord
 from dotenv import load_dotenv
 from ai_handler import AIHandler
@@ -67,6 +69,16 @@ async def _patched_handler(self, response):
     self.completion = data["completion"]
 
 akinator.AsyncClient._AsyncClient__handler = _patched_handler
+
+# Apply patch to akinator library's AsyncCloudScraper.post to prevent indefinite hangs by forcing a default timeout
+_original_post = akinator.async_client.AsyncCloudScraper.post
+
+async def _patched_post(self, url, data=None, json=None, **kwargs):
+    if 'timeout' not in kwargs:
+        kwargs['timeout'] = 5  # default 5 second timeout
+    return await _original_post(self, url, data=data, json=json, **kwargs)
+
+akinator.async_client.AsyncCloudScraper.post = _patched_post
 
 
 # Load environment variables
@@ -1177,7 +1189,8 @@ def draw_ship_heart(size, percent, bg_color=(40, 40, 40, 200), fill_color=(230, 
     draw_comb.line(points + [points[0]], fill=border_color, width=border_width)
     
     try:
-        font = ImageFont.truetype("arialbd.ttf", int(size * 0.16))
+        font_path = os.path.join(BASE_DIR, "assets", "fonts", "Roboto-Bold.ttf")
+        font = ImageFont.truetype(font_path, int(size * 0.16))
     except:
         font = ImageFont.load_default()
         
@@ -1521,7 +1534,7 @@ class SmashPassView(discord.ui.View):
 
 
 async def fetch_free_proxies():
-    url = "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=5000&country=all&ssl=yes&anonymity=anonymous"
+    url = "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=3000&country=all&ssl=yes&anonymity=anonymous"
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url, timeout=5) as r:
@@ -1957,8 +1970,10 @@ async def generate_family_tree_image(user_id: str, guild, bot) -> bytes:
     draw = ImageDraw.Draw(img)
     
     try:
-        title_font = ImageFont.truetype("arialbd.ttf", 36)
-        name_font = ImageFont.truetype("arialbd.ttf", 15)
+        title_font_path = os.path.join(BASE_DIR, "assets", "fonts", "Roboto-Bold.ttf")
+        name_font_path = os.path.join(BASE_DIR, "assets", "fonts", "Roboto-Regular.ttf")
+        title_font = ImageFont.truetype(title_font_path, 36)
+        name_font = ImageFont.truetype(name_font_path, 15)
     except IOError:
         title_font = ImageFont.load_default()
         name_font = ImageFont.load_default()
@@ -2575,7 +2590,7 @@ async def on_message(message):
                         draw.rectangle([10, 10, 590, 790], outline=(70, 40, 20, 255), width=8)
                         draw.rectangle([20, 20, 580, 780], outline=(70, 40, 20, 255), width=2)
                         
-                        font_path = "C:\\Windows\\Fonts\\impact.ttf"
+                        font_path = os.path.join(BASE_DIR, "assets", "fonts", "Anton-Regular.ttf")
                         try:
                             font_wanted = ImageFont.truetype(font_path, 80)
                             font_sub = ImageFont.truetype(font_path, 32)
@@ -2682,7 +2697,7 @@ async def on_message(message):
                 text = args[:200].strip()
                 async with message.channel.typing():
                     try:
-                        bg_path = "b:\\Discord bots\\Makima-chatbot\\assets\\memes\\gandhi.jpg"
+                        bg_path = os.path.join(BASE_DIR, "assets", "memes", "gandhi.jpg")
                         bg = Image.open(bg_path).convert("RGBA")
                         from PIL import ImageDraw, ImageFont
                         draw = ImageDraw.Draw(bg)
@@ -2692,8 +2707,10 @@ async def on_message(message):
                         author_size = max(14, int(H * 0.05))
                         
                         try:
-                            font_quote = ImageFont.truetype("C:\\Windows\\Fonts\\georgiai.ttf", font_size)
-                            font_author = ImageFont.truetype("C:\\Windows\\Fonts\\georgia.ttf", author_size)
+                            font_quote_path = os.path.join(BASE_DIR, "assets", "fonts", "CrimsonText-Italic.ttf")
+                            font_author_path = os.path.join(BASE_DIR, "assets", "fonts", "CrimsonText-Regular.ttf")
+                            font_quote = ImageFont.truetype(font_quote_path, font_size)
+                            font_author = ImageFont.truetype(font_author_path, author_size)
                         except:
                             font_quote = ImageFont.load_default()
                             font_author = ImageFont.load_default()
@@ -2959,7 +2976,7 @@ async def on_message(message):
                                 avatar_bytes = await resp.read()
                                 
                         # Process image
-                        template_path = "b:\\Discord bots\\Makima-chatbot\\assets\\memes\\rip.webp"
+                        template_path = os.path.join(BASE_DIR, "assets", "memes", "rip.webp")
                         img = Image.open(template_path).convert("RGBA")
                         
                         # Scale up by 4x for high quality text and drawings
@@ -2989,18 +3006,16 @@ async def on_message(message):
                         
                         # Try loading serif fonts
                         try:
-                            font_rip = ImageFont.truetype("timesbd.ttf", 48)
-                            font_name = ImageFont.truetype("timesbd.ttf", 36)
-                            font_text = ImageFont.truetype("georgiai.ttf", 26)
+                            font_rip_path = os.path.join(BASE_DIR, "assets", "fonts", "CrimsonText-Bold.ttf")
+                            font_name_path = os.path.join(BASE_DIR, "assets", "fonts", "CrimsonText-Bold.ttf")
+                            font_text_path = os.path.join(BASE_DIR, "assets", "fonts", "CrimsonText-Italic.ttf")
+                            font_rip = ImageFont.truetype(font_rip_path, 48)
+                            font_name = ImageFont.truetype(font_name_path, 36)
+                            font_text = ImageFont.truetype(font_text_path, 26)
                         except Exception:
-                            try:
-                                font_rip = ImageFont.truetype("times.ttf", 48)
-                                font_name = ImageFont.truetype("times.ttf", 36)
-                                font_text = ImageFont.truetype("timesi.ttf", 26)
-                            except Exception:
-                                font_rip = ImageFont.load_default()
-                                font_name = ImageFont.load_default()
-                                font_text = ImageFont.load_default()
+                            font_rip = ImageFont.load_default()
+                            font_name = ImageFont.load_default()
+                            font_text = ImageFont.load_default()
                                 
                         text_color = (40, 50, 45, 240)
                         
