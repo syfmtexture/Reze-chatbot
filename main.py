@@ -1538,17 +1538,29 @@ class SmashPassView(discord.ui.View):
 
 
 async def fetch_free_proxies():
-    url = "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=3000&country=all&ssl=yes&anonymity=anonymous"
+    urls = [
+        "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=3000&country=all&ssl=yes&anonymity=anonymous",
+        "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
+        "https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/http.txt"
+    ]
+    proxies = set()
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=5) as r:
-                if r.status == 200:
-                    text = await r.text()
-                    proxies = [line.strip() for line in text.split("\n") if line.strip()]
-                    return proxies
+            for url in urls:
+                try:
+                    async with session.get(url, timeout=5) as r:
+                        if r.status == 200:
+                            text = await r.text()
+                            for line in text.split("\n"):
+                                line = line.strip()
+                                if line and not line.startswith("#"):
+                                    if ":" in line:
+                                        proxies.add(line)
+                except Exception as url_err:
+                    logger.warning(f"Failed to fetch proxies from {url}: {url_err}")
     except Exception as e:
-        logger.warning(f"Failed to fetch proxies: {e}")
-    return []
+        logger.warning(f"Failed to fetch proxies pool: {e}")
+    return list(proxies)
 
 
 class AkinatorView(discord.ui.View):
@@ -1568,36 +1580,62 @@ class AkinatorView(discord.ui.View):
             await self.aki.start_game()
             return self.aki.question
         except Exception as direct_err:
-            logger.warning(f"Direct connection to Akinator failed: {direct_err}. Attempting proxy fallback...")
+            logger.warning(f"Direct connection to Akinator failed: {direct_err}. Attempting concurrent proxy fallback...")
             
             # Fetch free proxies
             proxies = await fetch_free_proxies()
             if not proxies:
                 raise direct_err
                 
-            # Try a random selection of proxies
+            # Randomize proxy selection
             import random
             random.shuffle(proxies)
             
-            # Attempt up to 5 proxies
-            for proxy_str in proxies[:6]:
+            # Dynamically adjust default executor pool limit to prevent thread queuing
+            import concurrent.futures
+            try:
+                loop = asyncio.get_running_loop()
+                loop.set_default_executor(concurrent.futures.ThreadPoolExecutor(max_workers=100))
+            except Exception as thread_err:
+                logger.warning(f"Could not adjust default threadpool executor: {thread_err}")
+            
+            # Helper to try game start for a single proxy
+            async def try_proxy(proxy_str):
                 proxy_url = f"http://{proxy_str}"
-                logger.info(f"Attempting Akinator proxy: {proxy_url}")
+                aki = AsyncAkinator()
+                aki.session.scraper.proxies = {
+                    "http": proxy_url,
+                    "https": proxy_url
+                }
+                aki.session.scraper.timeout = 5
+                await aki.start_game()
+                return aki, proxy_str
+
+            # Launch up to 40 proxy test tasks concurrently
+            test_pool = proxies[:40]
+            tasks = [asyncio.create_task(try_proxy(p)) for p in test_pool]
+            
+            completed_aki = None
+            successful_proxy = None
+            
+            for future in asyncio.as_completed(tasks):
                 try:
-                    # Create a new AsyncAkinator instance to start clean
-                    self.aki = AsyncAkinator()
-                    self.aki.session.scraper.proxies = {
-                        "http": proxy_url,
-                        "https": proxy_url
-                    }
-                    self.aki.session.scraper.timeout = 5
-                    
-                    await self.aki.start_game()
-                    logger.info(f"Successfully bypassed Cloudflare using proxy: {proxy_url}")
-                    return self.aki.question
-                except Exception as proxy_err:
-                    logger.warning(f"Proxy {proxy_url} failed: {proxy_err}")
-                    continue
+                    aki_instance, proxy_str = await future
+                    completed_aki = aki_instance
+                    successful_proxy = proxy_str
+                    logger.info(f"Successfully started Akinator game using proxy: {proxy_str}")
+                    break  # Found a working one, stop waiting
+                except Exception:
+                    pass  # Ignore failing proxies
+            
+            # Cancel all other pending tasks
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            
+            if completed_aki:
+                self.aki = completed_aki
+                return self.aki.question
             
             # If all proxies fail, raise the original direct connection error
             raise direct_err
