@@ -260,6 +260,10 @@ channel_last_activity = {}
 # user_id -> list of timestamps when they mentioned "reze"
 reze_mention_history = {}
 
+# Track user choices in Marry, Kiss, Kill game: message_id -> { user_id -> [emoji1, emoji2, emoji3] }
+mkk_choices = {}
+
+
 # Track application-scoped emojis fetched at startup
 application_emojis = []
 
@@ -1291,6 +1295,7 @@ def get_help_embed(category: str, bot_user=None) -> discord.Embed:
             value="• `$gay` / `$lesbian` `[@user]` ─ Check gayness/lesbianness percentage.\n"
                   "• `$impersonate [@user] [text]` ─ Mimic someone with temporary webhooks.\n"
                   "• `$waifu` / `$husbando` ─ Fetch random Anime characters (with voting!).\n"
+                  "• `$mkkf` / `$mkkm` ─ Play Marry, Kiss, Kill with female/male characters.\n"
                   "• `$villain` ─ Pit two iconic anime villains against each other!\n"
                   "• `$cat` / `$dog` ─ Fetch cute random animal pictures.\n"
                   "• `$confess [text]` ─ Submit anonymous confession (DM only).",
@@ -3956,7 +3961,7 @@ async def on_message(message):
 
                                             loop = asyncio.get_running_loop()
                                             img_io = await loop.run_in_executor(None, stitch_villain_images, b1, b2)
-                                            file = discord.File(fp=img_io, filename="villain_comparison.png")
+                                            file = discord.File(fp=img_io, filename="comparison.png")
 
                                             embed = discord.Embed(
                                                 title="Who's the better villain? 😈",
@@ -3968,7 +3973,7 @@ async def on_message(message):
                                                 f"🇧 **{name2} [0 %]**\n"
                                                 f"*from {anime2}*"
                                             )
-                                            embed.set_image(url="attachment://villain_comparison.png")
+                                            embed.set_image(url="attachment://comparison.png")
 
                                             reply_msg = await message.reply(file=file, embed=embed)
                                             await reply_msg.add_reaction("🇦")
@@ -3980,6 +3985,197 @@ async def on_message(message):
 
                     if not character_found:
                         await message.reply("couldn't fetch any villains right now... they're busy scheming 😈")
+                return
+
+            elif command in ["mkkf", "mkkm"]:
+                async with message.channel.typing():
+                    character_found = False
+                    for _ in range(3):
+                        try:
+                            random_page = random.randint(1, 8)
+                            query = """
+                            query ($page: Int, $perPage: Int) {
+                              Page (page: $page, perPage: $perPage) {
+                                characters (sort: FAVOURITES_DESC) {
+                                  id
+                                  name {
+                                    full
+                                    native
+                                  }
+                                  image {
+                                    large
+                                  }
+                                  gender
+                                  media (type: ANIME, sort: POPULARITY_DESC, perPage: 1) {
+                                    nodes {
+                                      title {
+                                        romaji
+                                        english
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                            """
+                            variables = {"page": random_page, "perPage": 50}
+                            url = "https://graphql.anilist.co"
+                            
+                            async with aiohttp.ClientSession() as session:
+                                async with session.post(url, json={"query": query, "variables": variables}) as resp:
+                                    if resp.status == 200:
+                                        res_data = await resp.json()
+                                        characters = res_data.get("data", {}).get("Page", {}).get("characters", [])
+                                        
+                                        target_gender = "female" if command == "mkkf" else "male"
+                                        filtered = [
+                                            c for c in characters 
+                                            if c.get("gender") and c["gender"].strip().lower() == target_gender
+                                            and c.get("image") and c["image"].get("large")
+                                            and "default.jpg" not in c["image"]["large"]
+                                            and "default.png" not in c["image"]["large"]
+                                        ]
+                                        
+                                        if len(filtered) >= 3:
+                                            char1, char2, char3 = random.sample(filtered, 3)
+                                            
+                                            name1 = char1.get("name", {}).get("full") or "Unknown"
+                                            m_nodes1 = char1.get("media", {}).get("nodes", [])
+                                            anime1 = m_nodes1[0].get("title", {}).get("english") or m_nodes1[0].get("title", {}).get("romaji") if m_nodes1 else "Unknown Anime"
+                                            img_url1 = char1.get("image", {}).get("large")
+                                            
+                                            name2 = char2.get("name", {}).get("full") or "Unknown"
+                                            m_nodes2 = char2.get("media", {}).get("nodes", [])
+                                            anime2 = m_nodes2[0].get("title", {}).get("english") or m_nodes2[0].get("title", {}).get("romaji") if m_nodes2 else "Unknown Anime"
+                                            img_url2 = char2.get("image", {}).get("large")
+
+                                            name3 = char3.get("name", {}).get("full") or "Unknown"
+                                            m_nodes3 = char3.get("media", {}).get("nodes", [])
+                                            anime3 = m_nodes3[0].get("title", {}).get("english") or m_nodes3[0].get("title", {}).get("romaji") if m_nodes3 else "Unknown Anime"
+                                            img_url3 = char3.get("image", {}).get("large")
+                                            
+                                            async def fetch_image_bytes(session, url):
+                                                if not url: return None
+                                                try:
+                                                    async with session.get(url, timeout=5) as r:
+                                                        if r.status == 200:
+                                                            return await r.read()
+                                                except Exception as e:
+                                                    logger.error(f"Failed to download image {url}: {e}")
+                                                return None
+                                                
+                                            b1 = await fetch_image_bytes(session, img_url1)
+                                            b2 = await fetch_image_bytes(session, img_url2)
+                                            b3 = await fetch_image_bytes(session, img_url3)
+                                            
+                                            def stitch_mkk_images(b1, b2, b3):
+                                                def load_img(b):
+                                                    if b:
+                                                        try:
+                                                            return Image.open(io.BytesIO(b)).convert("RGBA")
+                                                        except Exception:
+                                                            pass
+                                                    return Image.new("RGBA", (300, 400), (220, 220, 220, 255))
+                                                    
+                                                im1 = load_img(b1).resize((300, 400), Image.Resampling.LANCZOS)
+                                                im2 = load_img(b2).resize((300, 400), Image.Resampling.LANCZOS)
+                                                im3 = load_img(b3).resize((300, 400), Image.Resampling.LANCZOS)
+                                                
+                                                combined = Image.new("RGBA", (900, 400))
+                                                combined.paste(im1, (0, 0))
+                                                combined.paste(im2, (300, 0))
+                                                combined.paste(im3, (600, 0))
+                                                
+                                                out = io.BytesIO()
+                                                combined.save(out, format="PNG")
+                                                out.seek(0)
+                                                return out
+                                                
+                                            loop = asyncio.get_running_loop()
+                                            img_io = await loop.run_in_executor(None, stitch_mkk_images, b1, b2, b3)
+                                            file = discord.File(fp=img_io, filename="comparison.png")
+                                            
+                                            embed = discord.Embed(
+                                                title="Marry, Kiss, Kill? 💍💋💀",
+                                                color=discord.Color.from_rgb(212, 175, 230)
+                                            )
+                                            embed.description = (
+                                                f"🇦 **{name1}**\n"
+                                                f"*from {anime1}*\n\n"
+                                                f"🇧 **{name2}**\n"
+                                                f"*from {anime2}*\n\n"
+                                                f"🇨 **{name3}**\n"
+                                                f"*from {anime3}*"
+                                            )
+                                            embed.set_image(url="attachment://comparison.png")
+                                            embed.set_thumbnail(url="https://cdn.discordapp.com/emojis/1509890494539370597.gif")
+                                            
+                                            reply_msg = await message.reply(file=file, embed=embed)
+                                            await reply_msg.add_reaction("🇦")
+                                            await reply_msg.add_reaction("🇧")
+                                            await reply_msg.add_reaction("🇨")
+                                            character_found = True
+                                            break
+                        except Exception as e:
+                            logger.error(f"AniList MKK fetch attempt failed: {e}")
+                            
+                    if not character_found:
+                        try:
+                            fallback_endpoint = "waifu" if command == "mkkf" else "husbando"
+                            url = f"https://nekos.best/api/v2/{fallback_endpoint}?amount=3"
+                            headers = {"User-Agent": "MakimaChatbot/1.0"}
+                            async with aiohttp.ClientSession() as session:
+                                async with session.get(url, headers=headers) as resp:
+                                    if resp.status == 200:
+                                        res_data = await resp.json()
+                                        results = res_data.get("results", [])
+                                        if len(results) >= 3:
+                                            item1, item2, item3 = results[0], results[1], results[2]
+                                            
+                                            img_url1 = item1.get("url")
+                                            artist1 = item1.get("artist_name") or "Unknown Artist"
+                                            
+                                            img_url2 = item2.get("url")
+                                            artist2 = item2.get("artist_name") or "Unknown Artist"
+
+                                            img_url3 = item3.get("url")
+                                            artist3 = item3.get("artist_name") or "Unknown Artist"
+                                            
+                                            b1 = await fetch_image_bytes(session, img_url1)
+                                            b2 = await fetch_image_bytes(session, img_url2)
+                                            b3 = await fetch_image_bytes(session, img_url3)
+                                            
+                                            loop = asyncio.get_running_loop()
+                                            img_io = await loop.run_in_executor(None, stitch_mkk_images, b1, b2, b3)
+                                            file = discord.File(fp=img_io, filename="comparison.png")
+                                            
+                                            embed = discord.Embed(
+                                                title="Marry, Kiss, Kill? 💍💋💀",
+                                                color=discord.Color.from_rgb(212, 175, 230)
+                                            )
+                                            embed.description = (
+                                                f"🇦 **Character A**\n"
+                                                f"*Artist: {artist1}*\n\n"
+                                                f"🇧 **Character B**\n"
+                                                f"*Artist: {artist2}*\n\n"
+                                                f"🇨 **Character C**\n"
+                                                f"*Artist: {artist3}*"
+                                            )
+                                            embed.set_image(url="attachment://comparison.png")
+                                            embed.set_thumbnail(url="https://cdn.discordapp.com/emojis/1509890494539370597.gif")
+                                            
+                                            reply_msg = await message.reply(file=file, embed=embed)
+                                            await reply_msg.add_reaction("🇦")
+                                            await reply_msg.add_reaction("🇧")
+                                            await reply_msg.add_reaction("🇨")
+                                            character_found = True
+                                        else:
+                                            await message.reply(f"couldn't fetch enough images 😭")
+                                    else:
+                                        await message.reply(f"couldn't fetch any characters right now 😭")
+                        except Exception as e:
+                            logger.error(f"MKK command fallback failed: {e}")
+                            await message.reply("something went wrong while fetching 😭")
                 return
 
             elif command == "quote":
@@ -6639,15 +6835,143 @@ async def handle_wyr_voting_reaction(payload):
     except Exception as e:
         logger.error(f"[WYR-VOTE] Failed to update WYR embed: {e}")
 
+async def handle_mkk_voting_reaction(payload):
+    if payload.user_id == bot.user.id:
+        return
+    emoji_str = str(payload.emoji)
+    if emoji_str not in ["🇦", "🇧", "🇨"]:
+        return
+        
+    channel = bot.get_channel(payload.channel_id)
+    if not channel:
+        try:
+            channel = await bot.fetch_channel(payload.channel_id)
+        except Exception as e:
+            logger.error(f"[MKK-VOTE] Failed to fetch channel {payload.channel_id}: {e}")
+            return
+            
+    try:
+        message = await channel.fetch_message(payload.message_id)
+    except Exception as e:
+        logger.error(f"[MKK-VOTE] Failed to fetch message {payload.message_id}: {e}")
+        return
+        
+    if not message.author or message.author.id != bot.user.id:
+        return
+        
+    if not message.embeds:
+        return
+        
+    embed = message.embeds[0]
+    if not embed.title or not embed.title.startswith("Marry, Kiss, Kill?"):
+        return
+
+    logger.info(f"[MKK-VOTE] User {payload.user_id} reacted with {emoji_str} on message {message.id} ({payload.event_type})")
+
+    # Initialize message state if not present
+    if message.id not in mkk_choices:
+        mkk_choices[message.id] = {}
+        
+    user_id = payload.user_id
+    if user_id not in mkk_choices[message.id]:
+        mkk_choices[message.id][user_id] = []
+        
+    user_seq = mkk_choices[message.id][user_id]
+    
+    if payload.event_type == "REACTION_ADD":
+        if emoji_str not in user_seq:
+            user_seq.append(emoji_str)
+    elif payload.event_type == "REACTION_REMOVE":
+        if emoji_str in user_seq:
+            user_seq.remove(emoji_str)
+            
+    # Clean up empty user lists
+    if not user_seq:
+        mkk_choices[message.id].pop(user_id, None)
+
+    # Parse character information from existing description
+    lines = [line.strip() for line in embed.description.split("\n") if line.strip()]
+    
+    idx_a = -1
+    idx_b = -1
+    idx_c = -1
+    for idx, line in enumerate(lines):
+        if line.startswith("🇦"):
+            idx_a = idx
+        elif line.startswith("🇧"):
+            idx_b = idx
+        elif line.startswith("🇨"):
+            idx_c = idx
+            
+    if idx_a == -1 or idx_b == -1 or idx_c == -1:
+        logger.warning("[MKK-VOTE] Could not find option markers in description")
+        return
+        
+    def parse_char_info(idx):
+        line = lines[idx]
+        name = line[line.find("**")+2 : line.rfind("**")].strip() if "**" in line else "Unknown"
+        
+        anime_line = lines[idx+1] if idx+1 < len(lines) else "Unknown"
+        if anime_line.startswith("*") and anime_line.endswith("*"):
+            anime = anime_line[1:-1]
+        else:
+            anime = anime_line
+        return name, anime
+
+    name1, anime1 = parse_char_info(idx_a)
+    name2, anime2 = parse_char_info(idx_b)
+    name3, anime3 = parse_char_info(idx_c)
+
+    # Reconstruct description
+    desc_lines = [
+        f"🇦 **{name1}**",
+        f"*{anime1}*",
+        "",
+        f"🇧 **{name2}**",
+        f"*{anime2}*",
+        "",
+        f"🇨 **{name3}**",
+        f"*{anime3}*"
+    ]
+    
+    choices_dict = mkk_choices[message.id]
+    if choices_dict:
+        desc_lines.append("")
+        desc_lines.append("**Selections:**")
+        for uid, seq in choices_dict.items():
+            parts = []
+            if len(seq) > 0:
+                parts.append(f"💍 {seq[0]}")
+            if len(seq) > 1:
+                parts.append(f"💋 {seq[1]}")
+            if len(seq) > 2:
+                parts.append(f"💀 {seq[2]}")
+            desc_lines.append(f"• <@{uid}>: " + " | ".join(parts))
+
+    new_embed = discord.Embed(
+        title=embed.title,
+        description="\n".join(desc_lines),
+        color=embed.color
+    )
+    new_embed.set_image(url="attachment://comparison.png")
+    new_embed.set_thumbnail(url=embed.thumbnail.url if (embed.thumbnail and embed.thumbnail.url) else "https://cdn.discordapp.com/emojis/1509890494539370597.gif")
+    
+    try:
+        await message.edit(embed=new_embed)
+    except Exception as e:
+        logger.error(f"[MKK-VOTE] Failed to update embed: {e}")
+
 @bot.event
 async def on_raw_reaction_add(payload):
     await handle_waifu_voting_reaction(payload)
     await handle_wyr_voting_reaction(payload)
+    await handle_mkk_voting_reaction(payload)
 
 @bot.event
 async def on_raw_reaction_remove(payload):
     await handle_waifu_voting_reaction(payload)
     await handle_wyr_voting_reaction(payload)
+    await handle_mkk_voting_reaction(payload)
 
 @bot.event
 async def on_member_join(member):

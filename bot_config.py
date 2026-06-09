@@ -73,6 +73,7 @@ config = {
     "memory_compress_threshold": 20,
     "memory_keep_count": 10,
     "return_detection_days": 3,
+    "google_search_enabled": True,
 
     # --- Mood Pool ---
     "mood_pool": ["NORMAL", "NORMAL", "NORMAL", "YAPPING", "LEWD", "BORED"],
