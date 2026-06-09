@@ -488,7 +488,7 @@ RULES:
         self.channel_state[channel_id]["recent_responses"].append(text[:150])
         self.channel_state[channel_id]["recent_responses"] = self.channel_state[channel_id]["recent_responses"][-3:]
 
-    async def _get_groq_response(self, prompt: str, system_prompt: str = None, model: str = None) -> str:
+    async def _get_groq_response(self, prompt: str, system_prompt: str = None, model: str = None, temperature: float = 0.5) -> str:
         """Call Groq API with key rotation and fallback."""
         if not self.groq_api_keys:
             raise ValueError("No Groq API keys configured.")
@@ -503,7 +503,7 @@ RULES:
         payload = {
             "model": model_name,
             "messages": messages,
-            "temperature": 0.5
+            "temperature": temperature
         }
         
         for attempt in range(len(self.groq_api_keys)):
@@ -771,10 +771,16 @@ INSTRUCTIONS:
         return None
 
     async def get_truth_or_dare(self, mode: str) -> str:
-        """Generates a truth or dare prompt using Llama, falling back to Qwen, then Gemini, then local list."""
+        """Generates a unique truth or dare prompt using Llama, falling back to Qwen, then Gemini, then local list."""
         if mode.lower() == "truth":
             system_prompt = "You are a fun party game host."
-            prompt = "Generate a single, unique, fun, and slightly embarrassing 'Truth' question for a Discord game of Truth or Dare. It should be SFW and engaging for young adults. Return ONLY the question. No prefix, no quotation marks, no explanations."
+            topics = [
+                "secrets", "embarrassing moments", "crushes", "hobbies", "school/college",
+                "friendship", "first impressions", "lies", "guilty pleasures", "fears",
+                "music taste", "chat habits", "romantic interest", "weird food combinations"
+            ]
+            random_topic = random.choice(topics)
+            prompt = f"Generate a single, unique, fun, and slightly embarrassing 'Truth' question related to {random_topic} for a Discord game of Truth or Dare. It should be SFW and engaging for young adults. Return ONLY the question. No prefix, no quotation marks, no explanations. Random seed: {random.randint(1, 1000000)}"
             default_fallback = random.choice([
                 "What is the most embarrassing thing you've done in public?",
                 "Who is your secret crush in this server?",
@@ -784,7 +790,14 @@ INSTRUCTIONS:
             ])
         else:
             system_prompt = "You are a fun party game host."
-            prompt = "Generate a single, unique, fun, and harmless 'Dare' challenge that can be done on Discord (e.g. changing nickname, sending a funny message, singing in a voice note). It should be SFW and engaging for young adults. Return ONLY the dare task. No prefix, no quotation marks, no explanations."
+            topics = [
+                "changing nickname", "sending a funny message", "sharing a meme",
+                "making a silly statement in chat", "confessing a harmless secret",
+                "sending a screenshot of something harmless", "typing with a funny restriction",
+                "singing or reading a line in a voice note"
+            ]
+            random_topic = random.choice(topics)
+            prompt = f"Generate a single, unique, fun, and harmless 'Dare' challenge related to {random_topic} that can be done on Discord. It should be SFW and engaging for young adults. Return ONLY the dare task. No prefix, no quotation marks, no explanations. Random seed: {random.randint(1, 1000000)}"
             default_fallback = random.choice([
                 "Change your nickname in this server to 'Makima's Loyal Dog' for 24 hours.",
                 "Send the 10th photo in your camera roll to this chat.",
@@ -796,13 +809,13 @@ INSTRUCTIONS:
         # Try Llama first
         if self.groq_api_keys:
             try:
-                # Use Llama 3.3 70B
-                return await self._get_groq_response(prompt, system_prompt, model="llama-3.3-70b-versatile")
+                # Use Llama 3.3 70B with higher temperature
+                return await self._get_groq_response(prompt, system_prompt, model="llama-3.3-70b-versatile", temperature=1.0)
             except Exception as e:
                 print(f"Llama truth/dare generation failed: {e}. Trying Qwen fallback...")
                 try:
-                    # Fallback to Qwen 2.5 32B
-                    return await self._get_groq_response(prompt, system_prompt, model="qwen-2.5-32b-instruct")
+                    # Fallback to Qwen 2.5 32B with higher temperature
+                    return await self._get_groq_response(prompt, system_prompt, model="qwen-2.5-32b-instruct", temperature=1.0)
                 except Exception as e2:
                     print(f"Qwen fallback failed: {e2}. Trying Gemini fallback...")
 
@@ -811,10 +824,54 @@ INSTRUCTIONS:
             client = self._get_current_client()
             response = await client.aio.models.generate_content(
                 model=self.model,
-                contents=prompt
+                contents=prompt,
+                config=types.GenerateContentConfig(temperature=1.0)
             )
             return response.text.strip().strip('*\"\' ')
         except Exception as e3:
             print(f"Gemini fallback failed: {e3}. Using local fallback.")
             return default_fallback
+
+    async def translate_text(self, text: str, target_lang: str = None) -> str:
+        """Translates text using Gemini with smart target language detection and Hinglish/English defaults."""
+        if target_lang:
+            prompt = f"""You are a precise translator.
+Translate the following text to {target_lang}. Keep the translation natural and accurate.
+Return ONLY the translated text, no quotes, no explanations, no formatting:
+
+{text}"""
+        else:
+            prompt = f"""You are a precise translator.
+Analyze the following input:
+"{text}"
+
+Instructions:
+1. Identify the language of the text.
+2. If the input text is NOT in English, translate the entire input to English.
+3. If the input text is already in English, translate the entire input to Hinglish (Hindi written in Latin script/English alphabet).
+4. Return ONLY the translated text. Do NOT include any explanations, introduction, quotes, or markdown. Keep the original casing, tone, and punctuation of the text where appropriate.
+Note: Do NOT mistake common English greetings (like 'hi', 'he', 'go', 'no') at the start of the text as language codes (like 'hi' for Hindi, 'he' for Hebrew, 'go' for Gorgani, 'no' for Norwegian).
+"""
+
+        for attempt in range(len(self.clients)):
+            client = self._get_current_client()
+            try:
+                response = await client.aio.models.generate_content(
+                    model="gemini-3.1-flash-lite",
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        thinking_config=types.ThinkingConfig(
+                            thinking_level="LOW"
+                        )
+                    )
+                )
+                raw_text = response.text if response.text else None
+                if raw_text:
+                    return raw_text.strip().strip('*\"\' ')
+            except Exception as e:
+                print(f"Translation failed on client key {self.current_key_index}: {e}")
+                self._rotate_client()
+                continue
+        raise RuntimeError("All Gemini API keys failed for translation.")
+
 

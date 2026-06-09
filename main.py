@@ -1537,6 +1537,85 @@ class SmashPassView(discord.ui.View):
             pass
 
 
+class WaifuVotingView(discord.ui.View):
+    def __init__(self, char1_name, char1_anime, char2_name, char2_anime, command_type, author_mention):
+        super().__init__(timeout=180.0)
+        self.char1_name = char1_name
+        self.char1_anime = char1_anime
+        self.char2_name = char2_name
+        self.char2_anime = char2_anime
+        self.command_type = command_type
+        self.author_mention = author_mention
+        self.votes_a = set()
+        self.votes_b = set()
+        self.message = None
+        self.update_buttons()
+
+    def update_buttons(self):
+        self.children[0].label = f"{len(self.votes_a)}"
+        self.children[1].label = f"{len(self.votes_b)}"
+
+    def get_voting_embed(self):
+        total = len(self.votes_a) + len(self.votes_b)
+        if total == 0:
+            pct_a = 50
+            pct_b = 50
+        else:
+            pct_a = round((len(self.votes_a) / total) * 100)
+            pct_b = 100 - pct_a
+
+        embed = discord.Embed(
+            title=f"Who's the better {self.command_type}?",
+            color=discord.Color.from_rgb(255, 182, 193)
+        )
+        embed.description = (
+            f"🇦 **{self.char1_name} [{pct_a} %]**\n"
+            f"*from {self.char1_anime}*\n\n"
+            f"🇧 **{self.char2_name} [{pct_b} %]**\n"
+            f"*from {self.char2_anime}*\n\n"
+            f"• {self.author_mention}"
+        )
+        embed.set_footer(text="Powered by AniList | Reze bot")
+        if self.message and self.message.embeds:
+            old_embed = self.message.embeds[0]
+            if old_embed.image and old_embed.image.url:
+                embed.set_image(url=old_embed.image.url)
+        return embed
+
+    @discord.ui.button(emoji="🇦", style=discord.ButtonStyle.secondary)
+    async def vote_a(self, interaction: discord.Interaction, button: discord.ui.Button):
+        u_id = interaction.user.id
+        if u_id in self.votes_a:
+            self.votes_a.remove(u_id)
+        else:
+            self.votes_a.add(u_id)
+            self.votes_b.discard(u_id)
+        self.update_buttons()
+        await interaction.response.edit_message(embed=self.get_voting_embed(), view=self)
+
+    @discord.ui.button(emoji="🇧", style=discord.ButtonStyle.secondary)
+    async def vote_b(self, interaction: discord.Interaction, button: discord.ui.Button):
+        u_id = interaction.user.id
+        if u_id in self.votes_b:
+            self.votes_b.remove(u_id)
+        else:
+            self.votes_b.add(u_id)
+            self.votes_a.discard(u_id)
+        self.update_buttons()
+        await interaction.response.edit_message(embed=self.get_voting_embed(), view=self)
+
+    async def on_timeout(self):
+        for child in self.children:
+            child.disabled = True
+        try:
+            if self.message:
+                await self.message.edit(view=self)
+        except Exception:
+            pass
+
+
+
+
 async def fetch_free_proxies():
     urls = [
         "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=3000&country=all&ssl=yes&anonymity=anonymous",
@@ -3501,7 +3580,8 @@ async def on_message(message):
                     character_found = False
                     for _ in range(3):
                         try:
-                            random_page = random.randint(1, 120)
+                            # Restrict to pages 1-8 to get highly popular characters with good images
+                            random_page = random.randint(1, 8)
                             query = """
                             query ($page: Int, $perPage: Int) {
                               Page (page: $page, perPage: $perPage) {
@@ -3514,23 +3594,15 @@ async def on_message(message):
                                   image {
                                     large
                                   }
-                                  description
                                   gender
-                                  dateOfBirth {
-                                    year
-                                    month
-                                    day
-                                  }
                                   media (type: ANIME, sort: POPULARITY_DESC, perPage: 1) {
                                     nodes {
                                       title {
                                         romaji
                                         english
                                       }
-                                      siteUrl
                                     }
                                   }
-                                  siteUrl
                                 }
                               }
                             }
@@ -3548,121 +3620,141 @@ async def on_message(message):
                                         filtered = [
                                             c for c in characters 
                                             if c.get("gender") and c["gender"].strip().lower() == target_gender
+                                            and c.get("image") and c["image"].get("large")
+                                            and "default.jpg" not in c["image"]["large"]
+                                            and "default.png" not in c["image"]["large"]
                                         ]
                                         
-                                        if filtered:
-                                            char = random.choice(filtered)
-                                            full_name = char.get("name", {}).get("full") or "Unknown"
-                                            native_name = char.get("name", {}).get("native")
-                                            title = f"{full_name}"
-                                            if native_name:
-                                                title = f"{full_name} ({native_name})"
-                                                
-                                            anime_title = "Unknown Anime"
-                                            media_nodes = char.get("media", {}).get("nodes", [])
-                                            if media_nodes:
-                                                anime_title = media_nodes[0].get("title", {}).get("english") or media_nodes[0].get("title", {}).get("romaji") or "Unknown Anime"
-                                                
-                                            desc_raw = char.get("description") or ""
-                                            age = "Unknown"
-                                            if desc_raw:
-                                                clean_bio = re.sub(r'[~_*|]', '', desc_raw)
-                                                age_match = re.search(r'\b(?:age|aged)\s*(?:is|:)?\s*(\d+(?:\s*-\s*\d+)?)', clean_bio, re.IGNORECASE)
-                                                if age_match:
-                                                    age = age_match.group(1).strip()
-                                                else:
-                                                    age_match2 = re.search(r'\b(\d+(?:\s*-\s*\d+)?)\s*(?:years?\s*old|-years?-old|years?\s*of\s*age)', clean_bio, re.IGNORECASE)
-                                                    if age_match2:
-                                                        age = age_match2.group(1).strip()
+                                        if len(filtered) >= 2:
+                                            char1, char2 = random.sample(filtered, 2)
                                             
-                                            if age == "Unknown":
-                                                dob = char.get("dateOfBirth")
-                                                if dob and dob.get("year"):
-                                                    current_year = datetime.now().year
-                                                    age = str(current_year - dob["year"])
+                                            name1 = char1.get("name", {}).get("full") or "Unknown"
+                                            m_nodes1 = char1.get("media", {}).get("nodes", [])
+                                            anime1 = m_nodes1[0].get("title", {}).get("english") or m_nodes1[0].get("title", {}).get("romaji") if m_nodes1 else "Unknown Anime"
+                                            img_url1 = char1.get("image", {}).get("large")
                                             
-                                            # Default to AniList profile image
-                                            img_url = char.get("image", {}).get("large")
+                                            name2 = char2.get("name", {}).get("full") or "Unknown"
+                                            m_nodes2 = char2.get("media", {}).get("nodes", [])
+                                            anime2 = m_nodes2[0].get("title", {}).get("english") or m_nodes2[0].get("title", {}).get("romaji") if m_nodes2 else "Unknown Anime"
+                                            img_url2 = char2.get("image", {}).get("large")
                                             
-                                            # Attempt to fetch a stylish/fanart image of this character from Safebooru
-                                            words = [w.strip().lower() for w in full_name.split() if w.strip()]
-                                            words = [re.sub(r'[^a-z0-9_]', '', w) for w in words]
-                                            words = [w for w in words if w]
-                                            if words:
-                                                search_tags = " ".join(words)
-                                                safebooru_url = f"https://safebooru.org/index.php?page=dapi&s=post&q=index&json=1&limit=30&tags={urllib.parse.quote(search_tags)}"
+                                            async def fetch_image_bytes(session, url):
+                                                if not url: return None
                                                 try:
-                                                    async with session.get(safebooru_url) as sb_resp:
-                                                        if sb_resp.status == 200:
-                                                            posts = await sb_resp.json()
-                                                            if posts and isinstance(posts, list):
-                                                                post = random.choice(posts)
-                                                                sb_img = post.get("file_url")
-                                                                if sb_img:
-                                                                    if sb_img.startswith("//"):
-                                                                        sb_img = "https:" + sb_img
-                                                                    elif not sb_img.startswith("http"):
-                                                                        sb_img = "https://safebooru.org/" + sb_img.lstrip("/")
-                                                                    img_url = sb_img
-                                                except Exception as sb_err:
-                                                    logger.error(f"Failed to fetch stylish image from Safebooru: {sb_err}")
+                                                    async with session.get(url, timeout=5) as r:
+                                                        if r.status == 200:
+                                                            return await r.read()
+                                                except Exception as e:
+                                                    logger.error(f"Failed to download image {url}: {e}")
+                                                return None
+                                                
+                                            b1 = await fetch_image_bytes(session, img_url1)
+                                            b2 = await fetch_image_bytes(session, img_url2)
+                                            
+                                            from PIL import Image
+                                            import io
+                                            
+                                            def stitch_images(b1, b2):
+                                                if b1:
+                                                    try:
+                                                        im1 = Image.open(io.BytesIO(b1)).convert("RGBA")
+                                                    except Exception:
+                                                        im1 = Image.new("RGBA", (300, 400), (220, 220, 220, 255))
+                                                else:
+                                                    im1 = Image.new("RGBA", (300, 400), (220, 220, 220, 255))
+                                                    
+                                                if b2:
+                                                    try:
+                                                        im2 = Image.open(io.BytesIO(b2)).convert("RGBA")
+                                                    except Exception:
+                                                        im2 = Image.new("RGBA", (300, 400), (220, 220, 220, 255))
+                                                else:
+                                                    im2 = Image.new("RGBA", (300, 400), (220, 220, 220, 255))
+                                                    
+                                                im1 = im1.resize((300, 400), Image.Resampling.LANCZOS)
+                                                im2 = im2.resize((300, 400), Image.Resampling.LANCZOS)
+                                                
+                                                combined = Image.new("RGBA", (600, 400))
+                                                combined.paste(im1, (0, 0))
+                                                combined.paste(im2, (300, 0))
+                                                
+                                                out = io.BytesIO()
+                                                combined.save(out, format="PNG")
+                                                out.seek(0)
+                                                return out
+                                                
+                                            loop = asyncio.get_running_loop()
+                                            img_io = await loop.run_in_executor(None, stitch_images, b1, b2)
+                                            file = discord.File(fp=img_io, filename="comparison.png")
                                             
                                             embed = discord.Embed(
-                                                title=title,
-                                                url=char.get("siteUrl"),
-                                                color=discord.Color.from_rgb(255, 182, 193)
+                                                title=f"Who's the better {command}?",
+                                                color=discord.Color.from_rgb(0, 191, 255)
                                             )
-                                            if img_url:
-                                                embed.set_image(url=img_url)
-                                                
-                                            embed.add_field(name="✨ Anime", value=f"**{anime_title}**", inline=True)
-                                            embed.add_field(name="🎂 Age", value=f"**{age}**", inline=True)
-                                            embed.set_footer(text="Powered by AniList | Reze bot")
+                                            embed.description = (
+                                                f"🇦 **{name1} [50 %]**\n"
+                                                f"*from {anime1}*\n\n"
+                                                f"🇧 **{name2} [50 %]**\n"
+                                                f"*from {anime2}*\n\n"
+                                                f"• {message.author.mention}"
+                                            )
+                                            embed.set_image(url="attachment://comparison.png")
+                                            embed.set_thumbnail(url="https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/72x72/1f499.png")
                                             
-                                            view = SmashPassView()
-                                            reply_msg = await message.reply(embed=embed, view=view)
-                                            view.message = reply_msg
+                                            reply_msg = await message.reply(file=file, embed=embed)
+                                            await reply_msg.add_reaction("🇦")
+                                            await reply_msg.add_reaction("🇧")
                                             character_found = True
                                             break
                         except Exception as e:
                             logger.error(f"AniList waifu/husbando fetch attempt failed: {e}")
-                    
+                            
                     if not character_found:
                         try:
-                            url = f"https://nekos.best/api/v2/{command}"
+                            url = f"https://nekos.best/api/v2/{command}?amount=2"
                             headers = {"User-Agent": "MakimaChatbot/1.0"}
                             async with aiohttp.ClientSession() as session:
                                 async with session.get(url, headers=headers) as resp:
                                     if resp.status == 200:
                                         res_data = await resp.json()
-                                        item = res_data["results"][0]
-                                        img_url = item["url"]
-                                        
-                                        artist_name = item.get("artist_name")
-                                        artist_href = item.get("artist_href")
-                                        source_url = item.get("source_url")
-                                        
-                                        desc_parts = []
-                                        if artist_name:
-                                            if artist_href:
-                                                desc_parts.append(f"🎨 **Artist:** [{artist_name}]({artist_href})")
-                                            else:
-                                                desc_parts.append(f"🎨 **Artist:** **{artist_name}**")
-                                        if source_url:
-                                            desc_parts.append(f"🔗 **Source:** [Artwork Link]({source_url})")
+                                        results = res_data.get("results", [])
+                                        if len(results) >= 2:
+                                            item1 = results[0]
+                                            item2 = results[1]
                                             
-                                        description = "\n".join(desc_parts) if desc_parts else "A beautiful anime artwork chosen just for you! ✨"
-                                        
-                                        embed = discord.Embed(
-                                            title=f"Your random {command}",
-                                            description=description,
-                                            color=discord.Color.from_rgb(255, 182, 193)
-                                        )
-                                        embed.set_image(url=img_url)
-                                        embed.set_footer(text="Powered by nekos.best | Reze bot")
-                                        view = SmashPassView()
-                                        reply_msg = await message.reply(embed=embed, view=view)
-                                        view.message = reply_msg
+                                            img_url1 = item1.get("url")
+                                            artist1 = item1.get("artist_name") or "Unknown Artist"
+                                            
+                                            img_url2 = item2.get("url")
+                                            artist2 = item2.get("artist_name") or "Unknown Artist"
+                                            
+                                            b1 = await fetch_image_bytes(session, img_url1)
+                                            b2 = await fetch_image_bytes(session, img_url2)
+                                            
+                                            loop = asyncio.get_running_loop()
+                                            img_io = await loop.run_in_executor(None, stitch_images, b1, b2)
+                                            file = discord.File(fp=img_io, filename="comparison.png")
+                                            
+                                            embed = discord.Embed(
+                                                title=f"Who's the better {command}?",
+                                                color=discord.Color.from_rgb(0, 191, 255)
+                                            )
+                                            embed.description = (
+                                                f"🇦 **Character A [50 %]**\n"
+                                                f"*Artist: {artist1}*\n\n"
+                                                f"🇧 **Character B [50 %]**\n"
+                                                f"*Artist: {artist2}*\n\n"
+                                                f"• {message.author.mention}"
+                                            )
+                                            embed.set_image(url="attachment://comparison.png")
+                                            embed.set_thumbnail(url="https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/72x72/1f499.png")
+                                            
+                                            reply_msg = await message.reply(file=file, embed=embed)
+                                            await reply_msg.add_reaction("🇦")
+                                            await reply_msg.add_reaction("🇧")
+                                            character_found = True
+                                        else:
+                                            await message.reply(f"couldn't fetch enough {command} images 😭")
                                     else:
                                         await message.reply(f"couldn't fetch any {command} right now 😭")
                         except Exception as e:
@@ -6025,6 +6117,165 @@ async def status_cycling_loop():
             await asyncio.sleep(60)
 
 # --- SERVER EVENT HANDLERS ---
+
+async def handle_waifu_voting_reaction(payload):
+    if payload.user_id == bot.user.id:
+        return
+    emoji_str = str(payload.emoji)
+    if emoji_str not in ["🇦", "🇧"]:
+        return
+        
+    channel = bot.get_channel(payload.channel_id)
+    if not channel:
+        try:
+            channel = await bot.fetch_channel(payload.channel_id)
+        except Exception as e:
+            logger.error(f"[WAIFU-VOTE] Failed to fetch channel {payload.channel_id}: {e}")
+            return
+            
+    try:
+        message = await channel.fetch_message(payload.message_id)
+    except Exception as e:
+        logger.error(f"[WAIFU-VOTE] Failed to fetch message {payload.message_id}: {e}")
+        return
+        
+    if not message.author or message.author.id != bot.user.id:
+        return
+        
+    if not message.embeds:
+        return
+        
+    embed = message.embeds[0]
+    if not embed.title or not (embed.title.startswith("Who's the better waifu?") or embed.title.startswith("Who's the better husbando?")):
+        return
+
+    logger.info(f"[WAIFU-VOTE] User {payload.user_id} reacted with {emoji_str} on message {message.id}")
+
+    # If the reaction was added, check if we need to remove the opposite reaction to enforce single-voting
+    if payload.event_type == "REACTION_ADD":
+        opposite_emoji = "🇧" if emoji_str == "🇦" else "🇦"
+        for r in message.reactions:
+            if str(r.emoji) == opposite_emoji:
+                async for u in r.users():
+                    if u.id == payload.user_id:
+                        try:
+                            logger.info(f"[WAIFU-VOTE] Removing opposite reaction {opposite_emoji} for user {payload.user_id}")
+                            await message.remove_reaction(opposite_emoji, u)
+                        except Exception as ex:
+                            logger.error(f"[WAIFU-VOTE] Failed to remove opposite reaction: {ex}")
+                        break
+
+    # Re-fetch the message to ensure we have the absolute latest reaction counts after potential removals
+    try:
+        message = await channel.fetch_message(payload.message_id)
+    except Exception as e:
+        logger.error(f"[WAIFU-VOTE] Failed to re-fetch message: {e}")
+        return
+
+    votes_a_count = 0
+    votes_b_count = 0
+    for r in message.reactions:
+        emoji_name = str(r.emoji)
+        if emoji_name == "🇦":
+            async for u in r.users():
+                if u.id != bot.user.id:
+                    votes_a_count += 1
+        elif emoji_name == "🇧":
+            async for u in r.users():
+                if u.id != bot.user.id:
+                    votes_b_count += 1
+            
+    total = votes_a_count + votes_b_count
+    logger.info(f"[WAIFU-VOTE] Votes counted - A: {votes_a_count}, B: {votes_b_count}, Total: {total}")
+    if total == 0:
+        pct_a = 50
+        pct_b = 50
+    else:
+        pct_a = round((votes_a_count / total) * 100)
+        pct_b = 100 - pct_a
+        
+    if not embed.description:
+        logger.warning("[WAIFU-VOTE] Embed description is empty")
+        return
+        
+    lines = [line.strip() for line in embed.description.split("\n") if line.strip()]
+    if len(lines) < 5:
+        logger.warning(f"[WAIFU-VOTE] Embed description has fewer than 5 lines: {len(lines)}")
+        return
+        
+    # Extract Character A Name using regex
+    line0 = lines[0]
+    match_a = re.search(r"🇦\s*\*\*(?P<name>.*?)\s*\[\d+\s*%\]\*\*", line0)
+    if match_a:
+        name1 = match_a.group("name").strip()
+    else:
+        # Fallback to index slicing if regex fails
+        if line0.startswith("🇦 **"):
+            line0 = line0[4:]
+        idx_bracket = line0.rfind(" [")
+        name1 = line0[:idx_bracket].rstrip("*").rstrip() if idx_bracket != -1 else "Unknown"
+    
+    # Extract Character A Anime/Artist
+    line1 = lines[1]
+    if line1.startswith("*") and line1.endswith("*"):
+        anime1 = line1[1:-1]
+    else:
+        anime1 = "from Unknown"
+        
+    # Extract Character B Name using regex
+    line2 = lines[2]
+    match_b = re.search(r"🇧\s*\*\*(?P<name>.*?)\s*\[\d+\s*%\]\*\*", line2)
+    if match_b:
+        name2 = match_b.group("name").strip()
+    else:
+        if line2.startswith("🇧 **"):
+            line2 = line2[4:]
+        idx_bracket2 = line2.rfind(" [")
+        name2 = line2[:idx_bracket2].rstrip("*").rstrip() if idx_bracket2 != -1 else "Unknown"
+    
+    # Extract Character B Anime/Artist
+    line3 = lines[3]
+    if line3.startswith("*") and line3.endswith("*"):
+        anime2 = line3[1:-1]
+    else:
+        anime2 = "from Unknown"
+        
+    author_mention = lines[4]
+    logger.info(f"[WAIFU-VOTE] Parsed - Name1: {name1} ({anime1}), Name2: {name2} ({anime2}), Author: {author_mention}")
+    
+    # Rebuild description with new percentages
+    desc_lines = [
+        f"🇦 **{name1} [{pct_a} %]**",
+        f"*{anime1}*",
+        "",
+        f"🇧 **{name2} [{pct_b} %]**",
+        f"*{anime2}*",
+        "",
+        f"{author_mention}"
+    ]
+    
+    new_embed = discord.Embed(
+        title=embed.title,
+        description="\n".join(desc_lines),
+        color=embed.color
+    )
+    new_embed.set_image(url="attachment://comparison.png")
+    if embed.thumbnail and embed.thumbnail.url:
+        new_embed.set_thumbnail(url=embed.thumbnail.url)
+        
+    try:
+        await message.edit(embed=new_embed)
+        logger.info(f"[WAIFU-VOTE] Successfully updated embed for message {message.id} (A: {pct_a}%, B: {pct_b}%)")
+    except Exception as e:
+        logger.error(f"[WAIFU-VOTE] Failed to update voting embed: {e}")
+
+@bot.event
+async def on_raw_reaction_add(payload):
+    await handle_waifu_voting_reaction(payload)
+
+@bot.event
+async def on_raw_reaction_remove(payload):
+    await handle_waifu_voting_reaction(payload)
 
 @bot.event
 async def on_member_join(member):
