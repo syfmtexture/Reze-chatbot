@@ -1291,6 +1291,7 @@ def get_help_embed(category: str, bot_user=None) -> discord.Embed:
             value="• `$gay` / `$lesbian` `[@user]` ─ Check gayness/lesbianness percentage.\n"
                   "• `$impersonate [@user] [text]` ─ Mimic someone with temporary webhooks.\n"
                   "• `$waifu` / `$husbando` ─ Fetch random Anime characters (with voting!).\n"
+                  "• `$villain` ─ Pit two iconic anime villains against each other!\n"
                   "• `$cat` / `$dog` ─ Fetch cute random animal pictures.\n"
                   "• `$confess [text]` ─ Submit anonymous confession (DM only).",
             inline=False
@@ -3732,9 +3733,6 @@ async def on_message(message):
                                             b1 = await fetch_image_bytes(session, img_url1)
                                             b2 = await fetch_image_bytes(session, img_url2)
                                             
-                                            from PIL import Image
-                                            import io
-                                            
                                             def stitch_images(b1, b2):
                                                 if b1:
                                                     try:
@@ -3839,6 +3837,149 @@ async def on_message(message):
                         except Exception as e:
                             logger.error(f"Waifu/Husbando command fallback failed: {e}")
                             await message.reply("something went wrong while fetching 😭")
+                return
+
+            elif command == "villain":
+                VILLAIN_KEYWORDS = [
+                    "antagonist", "villain", "evil", "criminal", "murderer",
+                    "enemy", "rival", "tyrant", "demon", "psychopath",
+                    "sociopath", "killer", "mastermind", "corrupt", "betrays",
+                    "destroyer", "conquer", "terroris", "manipulat", "sadist",
+                    "merciless", "ruthless", "feared", "notorious", "dark lord",
+                    "warlord", "overlord", "threat", "massacre", "genocide"
+                ]
+                async with message.channel.typing():
+                    character_found = False
+                    for attempt in range(5):
+                        try:
+                            random_page = random.randint(1, 12)
+                            query = """
+                            query ($page: Int, $perPage: Int) {
+                              Page (page: $page, perPage: $perPage) {
+                                characters (sort: FAVOURITES_DESC) {
+                                  id
+                                  name {
+                                    full
+                                    native
+                                  }
+                                  image {
+                                    large
+                                  }
+                                  description(asHtml: false)
+                                  media (type: ANIME, sort: POPULARITY_DESC, perPage: 1) {
+                                    nodes {
+                                      title {
+                                        romaji
+                                        english
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                            """
+                            variables = {"page": random_page, "perPage": 50}
+                            url = "https://graphql.anilist.co"
+
+                            async with aiohttp.ClientSession() as session:
+                                async with session.post(url, json={"query": query, "variables": variables}) as resp:
+                                    if resp.status == 200:
+                                        res_data = await resp.json()
+                                        characters = res_data.get("data", {}).get("Page", {}).get("characters", [])
+
+                                        # Filter characters whose description contains villain keywords
+                                        filtered = []
+                                        for c in characters:
+                                            desc = (c.get("description") or "").lower()
+                                            has_image = (
+                                                c.get("image") and c["image"].get("large")
+                                                and "default.jpg" not in c["image"]["large"]
+                                                and "default.png" not in c["image"]["large"]
+                                            )
+                                            if has_image and any(kw in desc for kw in VILLAIN_KEYWORDS):
+                                                filtered.append(c)
+
+                                        if len(filtered) >= 2:
+                                            char1, char2 = random.sample(filtered, 2)
+
+                                            name1 = char1.get("name", {}).get("full") or "Unknown"
+                                            m_nodes1 = char1.get("media", {}).get("nodes", [])
+                                            anime1 = m_nodes1[0].get("title", {}).get("english") or m_nodes1[0].get("title", {}).get("romaji") if m_nodes1 else "Unknown Anime"
+                                            img_url1 = char1.get("image", {}).get("large")
+
+                                            name2 = char2.get("name", {}).get("full") or "Unknown"
+                                            m_nodes2 = char2.get("media", {}).get("nodes", [])
+                                            anime2 = m_nodes2[0].get("title", {}).get("english") or m_nodes2[0].get("title", {}).get("romaji") if m_nodes2 else "Unknown Anime"
+                                            img_url2 = char2.get("image", {}).get("large")
+
+                                            async def fetch_villain_img(session, img_url):
+                                                if not img_url: return None
+                                                try:
+                                                    async with session.get(img_url, timeout=5) as r:
+                                                        if r.status == 200:
+                                                            return await r.read()
+                                                except Exception as e:
+                                                    logger.error(f"Failed to download villain image {img_url}: {e}")
+                                                return None
+
+                                            b1 = await fetch_villain_img(session, img_url1)
+                                            b2 = await fetch_villain_img(session, img_url2)
+
+                                            def stitch_villain_images(b1, b2):
+                                                if b1:
+                                                    try:
+                                                        im1 = Image.open(io.BytesIO(b1)).convert("RGBA")
+                                                    except Exception:
+                                                        im1 = Image.new("RGBA", (300, 400), (40, 10, 10, 255))
+                                                else:
+                                                    im1 = Image.new("RGBA", (300, 400), (40, 10, 10, 255))
+
+                                                if b2:
+                                                    try:
+                                                        im2 = Image.open(io.BytesIO(b2)).convert("RGBA")
+                                                    except Exception:
+                                                        im2 = Image.new("RGBA", (300, 400), (40, 10, 10, 255))
+                                                else:
+                                                    im2 = Image.new("RGBA", (300, 400), (40, 10, 10, 255))
+
+                                                im1 = im1.resize((300, 400), Image.Resampling.LANCZOS)
+                                                im2 = im2.resize((300, 400), Image.Resampling.LANCZOS)
+
+                                                combined = Image.new("RGBA", (600, 400))
+                                                combined.paste(im1, (0, 0))
+                                                combined.paste(im2, (300, 0))
+
+                                                out = io.BytesIO()
+                                                combined.save(out, format="PNG")
+                                                out.seek(0)
+                                                return out
+
+                                            loop = asyncio.get_running_loop()
+                                            img_io = await loop.run_in_executor(None, stitch_villain_images, b1, b2)
+                                            file = discord.File(fp=img_io, filename="villain_comparison.png")
+
+                                            embed = discord.Embed(
+                                                title="Who's the better villain? 😈",
+                                                color=discord.Color.from_rgb(180, 30, 30)
+                                            )
+                                            embed.description = (
+                                                f"🇦 **{name1} [0 %]**\n"
+                                                f"*from {anime1}*\n\n"
+                                                f"🇧 **{name2} [0 %]**\n"
+                                                f"*from {anime2}*"
+                                            )
+                                            embed.set_image(url="attachment://villain_comparison.png")
+
+                                            reply_msg = await message.reply(file=file, embed=embed)
+                                            await reply_msg.add_reaction("🇦")
+                                            await reply_msg.add_reaction("🇧")
+                                            character_found = True
+                                            break
+                        except Exception as e:
+                            logger.error(f"AniList villain fetch attempt failed: {e}")
+
+                    if not character_found:
+                        await message.reply("couldn't fetch any villains right now... they're busy scheming 😈")
                 return
 
             elif command == "quote":
@@ -6225,7 +6366,7 @@ async def handle_waifu_voting_reaction(payload):
         return
         
     embed = message.embeds[0]
-    if not embed.title or not (embed.title.startswith("Who's the better waifu?") or embed.title.startswith("Who's the better husbando?")):
+    if not embed.title or not (embed.title.startswith("Who's the better waifu?") or embed.title.startswith("Who's the better husbando?") or embed.title.startswith("Who's the better villain?")):
         return
 
     logger.info(f"[WAIFU-VOTE] User {payload.user_id} reacted with {emoji_str} on message {message.id}")
