@@ -1227,7 +1227,8 @@ def get_help_embed(category: str, bot_user=None) -> discord.Embed:
             value="• `$anime [query]` ─ Search MyAnimeList for anime details.\n"
                   "• `$manga [query]` ─ Search MyAnimeList for manga details.\n"
                   "• `$movie` / `$show` `[query]` ─ Search IMDb details.\n"
-                  "• `$avatar` / `$av` `[@user]` ─ Retrieve a user's avatar.",
+                  "• `$avatar` / `$av` `[@user]` ─ Retrieve a user's avatar.\n"
+                  "• `$tl` / `$translate` `[lang] [text] / [reply]` ─ Translate text/replied message.",
             inline=False
         )
         embed.add_field(
@@ -1270,7 +1271,8 @@ def get_help_embed(category: str, bot_user=None) -> discord.Embed:
             value="• `$akinator` ─ Play Akinator directly in chat using buttons.\n"
                   "• `$choose [opt1 | opt2]` ─ Let Reze choose between options.\n"
                   "• `$quote [@user] [text] / [reply]` ─ Generate a premium cinematic quote card.\n"
-                  "• `$truth` / `$dare` ─ Play a game of Truth or Dare powered by AI (Llama 3.3).",
+                  "• `$truth` / `$dare` ─ Play a game of Truth or Dare powered by AI (Llama 3.3).\n"
+                  "• `$wyr` / `$wouldyourather` ─ Play a game of Would You Rather with voting.",
             inline=False
         )
         embed.add_field(
@@ -3217,6 +3219,85 @@ async def on_message(message):
                     except Exception as e:
                         logger.error(f"Akinator start error: {e}", exc_info=True)
                         await message.reply("couldn't start the Akinator game right now 😭")
+            elif command in ["wyr", "wouldyourather"]:
+                async with message.channel.typing():
+                    try:
+                        opt_a, opt_b = await ai.get_would_you_rather()
+                        
+                        embed = discord.Embed(
+                            title="Would you rather ...",
+                            description=f"🅰️ {opt_a} [0 %]\n\n🅱️ {opt_b} [0 %]",
+                            color=discord.Color.from_rgb(220, 20, 60)
+                        )
+                        
+                        reply_msg = await message.reply(embed=embed)
+                        
+                        await reply_msg.add_reaction("🅰️")
+                        await reply_msg.add_reaction("🅱️")
+                        
+                    except Exception as e:
+                        logger.error(f"Would you rather command failed: {e}", exc_info=True)
+                        await message.reply("couldn't start a would you rather game right now 😭")
+                return
+
+            elif command in ["tl", "translate"]:
+                async with message.channel.typing():
+                    try:
+                        text_to_translate = ""
+                        target_lang = None
+                        
+                        if message.reference and message.reference.message_id:
+                            # Replying to a message
+                            try:
+                                ref_msg = await message.channel.fetch_message(message.reference.message_id)
+                                text_to_translate = ref_msg.content
+                                # If the replied message content is empty, check embeds
+                                if not text_to_translate and ref_msg.embeds:
+                                    text_to_translate = ref_msg.embeds[0].description or ""
+                                    
+                                if args.strip():
+                                    target_lang = args.strip()
+                            except Exception as ref_err:
+                                logger.error(f"Failed to fetch referenced message: {ref_err}")
+                        else:
+                            # Not replying, parse from args
+                            if args.strip():
+                                words = args.strip().split(None, 1)
+                                text_to_translate = args.strip()
+                                
+                                COMMON_LANGS = {
+                                    "english", "hindi", "hinglish", "spanish", "french", "german", "japanese", 
+                                    "chinese", "russian", "korean", "italian", "portuguese", "arabic", "turkish",
+                                    "en", "hi", "es", "fr", "de", "ja", "zh", "ru", "ko", "it", "pt", "ar", "tr"
+                                }
+                                
+                                if len(words) > 1:
+                                    first_word = words[0].lower()
+                                    if first_word == "to":
+                                        sub_words = words[1].split(None, 1)
+                                        if sub_words:
+                                            second_word = sub_words[0].lower()
+                                            if second_word in COMMON_LANGS:
+                                                target_lang = second_word
+                                                text_to_translate = sub_words[1] if len(sub_words) > 1 else ""
+                                    elif first_word in COMMON_LANGS:
+                                        target_lang = first_word
+                                        text_to_translate = words[1]
+                        
+                        text_to_translate = text_to_translate.strip()
+                        if not text_to_translate:
+                            await message.reply("you need to reply to a message or give me some text to translate 🙄")
+                            return
+                        
+                        translated = await ai.translate_text(text_to_translate, target_lang)
+                        if translated:
+                            await message.reply(translated)
+                        else:
+                            await message.reply("couldn't translate that, sorry 😭")
+                            
+                    except Exception as e:
+                        logger.error(f"Translation command failed: {e}", exc_info=True)
+                        await message.reply("something went wrong while translating 😭")
                 return
 
             elif command in ["anime", "manga"]:
@@ -3689,17 +3770,16 @@ async def on_message(message):
                                             
                                             embed = discord.Embed(
                                                 title=f"Who's the better {command}?",
-                                                color=discord.Color.from_rgb(0, 191, 255)
+                                                color=discord.Color.from_rgb(212, 175, 230)
                                             )
                                             embed.description = (
-                                                f"🇦 **{name1} [50 %]**\n"
+                                                f"🇦 **{name1} [0 %]**\n"
                                                 f"*from {anime1}*\n\n"
-                                                f"🇧 **{name2} [50 %]**\n"
-                                                f"*from {anime2}*\n\n"
-                                                f"• {message.author.mention}"
+                                                f"🇧 **{name2} [0 %]**\n"
+                                                f"*from {anime2}*"
                                             )
                                             embed.set_image(url="attachment://comparison.png")
-                                            embed.set_thumbnail(url="https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/72x72/1f499.png")
+                                            embed.set_thumbnail(url="https://cdn.discordapp.com/emojis/1509890494539370597.gif")
                                             
                                             reply_msg = await message.reply(file=file, embed=embed)
                                             await reply_msg.add_reaction("🇦")
@@ -3737,17 +3817,16 @@ async def on_message(message):
                                             
                                             embed = discord.Embed(
                                                 title=f"Who's the better {command}?",
-                                                color=discord.Color.from_rgb(0, 191, 255)
+                                                color=discord.Color.from_rgb(212, 175, 230)
                                             )
                                             embed.description = (
-                                                f"🇦 **Character A [50 %]**\n"
+                                                f"🇦 **Character A [0 %]**\n"
                                                 f"*Artist: {artist1}*\n\n"
-                                                f"🇧 **Character B [50 %]**\n"
-                                                f"*Artist: {artist2}*\n\n"
-                                                f"• {message.author.mention}"
+                                                f"🇧 **Character B [0 %]**\n"
+                                                f"*Artist: {artist2}*"
                                             )
                                             embed.set_image(url="attachment://comparison.png")
-                                            embed.set_thumbnail(url="https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/72x72/1f499.png")
+                                            embed.set_thumbnail(url="https://cdn.discordapp.com/emojis/1509890494539370597.gif")
                                             
                                             reply_msg = await message.reply(file=file, embed=embed)
                                             await reply_msg.add_reaction("🇦")
@@ -6172,24 +6251,26 @@ async def handle_waifu_voting_reaction(payload):
         logger.error(f"[WAIFU-VOTE] Failed to re-fetch message: {e}")
         return
 
-    votes_a_count = 0
-    votes_b_count = 0
+    votes_a_users = []
+    votes_b_users = []
     for r in message.reactions:
         emoji_name = str(r.emoji)
         if emoji_name == "🇦":
             async for u in r.users():
                 if u.id != bot.user.id:
-                    votes_a_count += 1
+                    votes_a_users.append(u.id)
         elif emoji_name == "🇧":
             async for u in r.users():
                 if u.id != bot.user.id:
-                    votes_b_count += 1
+                    votes_b_users.append(u.id)
             
+    votes_a_count = len(votes_a_users)
+    votes_b_count = len(votes_b_users)
     total = votes_a_count + votes_b_count
     logger.info(f"[WAIFU-VOTE] Votes counted - A: {votes_a_count}, B: {votes_b_count}, Total: {total}")
     if total == 0:
-        pct_a = 50
-        pct_b = 50
+        pct_a = 0
+        pct_b = 0
     else:
         pct_a = round((votes_a_count / total) * 100)
         pct_b = 100 - pct_a
@@ -6199,59 +6280,75 @@ async def handle_waifu_voting_reaction(payload):
         return
         
     lines = [line.strip() for line in embed.description.split("\n") if line.strip()]
-    if len(lines) < 5:
-        logger.warning(f"[WAIFU-VOTE] Embed description has fewer than 5 lines: {len(lines)}")
+    
+    idx_a = -1
+    idx_b = -1
+    for idx, line in enumerate(lines):
+        if line.startswith("🇦"):
+            idx_a = idx
+        elif line.startswith("🇧"):
+            idx_b = idx
+            
+    if idx_a == -1 or idx_b == -1 or idx_a + 1 >= len(lines) or idx_b + 1 >= len(lines):
+        logger.warning("[WAIFU-VOTE] Could not find option markers in description")
         return
         
+    line_a = lines[idx_a]
+    line_b = lines[idx_b]
+    
     # Extract Character A Name using regex
-    line0 = lines[0]
-    match_a = re.search(r"🇦\s*\*\*(?P<name>.*?)\s*\[\d+\s*%\]\*\*", line0)
+    match_a = re.search(r"🇦\s*\*\*(?P<name>.*?)\s*\[\d+\s*%\]\*\*", line_a)
     if match_a:
         name1 = match_a.group("name").strip()
     else:
         # Fallback to index slicing if regex fails
-        if line0.startswith("🇦 **"):
-            line0 = line0[4:]
-        idx_bracket = line0.rfind(" [")
-        name1 = line0[:idx_bracket].rstrip("*").rstrip() if idx_bracket != -1 else "Unknown"
+        if line_a.startswith("🇦 **"):
+            line_a = line_a[4:]
+        idx_bracket = line_a.rfind(" [")
+        name1 = line_a[:idx_bracket].rstrip("*").rstrip() if idx_bracket != -1 else "Unknown"
     
     # Extract Character A Anime/Artist
-    line1 = lines[1]
-    if line1.startswith("*") and line1.endswith("*"):
-        anime1 = line1[1:-1]
+    line_anime_a = lines[idx_a + 1]
+    if line_anime_a.startswith("*") and line_anime_a.endswith("*"):
+        anime1 = line_anime_a[1:-1]
     else:
-        anime1 = "from Unknown"
+        anime1 = line_anime_a
         
     # Extract Character B Name using regex
-    line2 = lines[2]
-    match_b = re.search(r"🇧\s*\*\*(?P<name>.*?)\s*\[\d+\s*%\]\*\*", line2)
+    match_b = re.search(r"🇧\s*\*\*(?P<name>.*?)\s*\[\d+\s*%\]\*\*", line_b)
     if match_b:
         name2 = match_b.group("name").strip()
     else:
-        if line2.startswith("🇧 **"):
-            line2 = line2[4:]
-        idx_bracket2 = line2.rfind(" [")
-        name2 = line2[:idx_bracket2].rstrip("*").rstrip() if idx_bracket2 != -1 else "Unknown"
+        if line_b.startswith("🇧 **"):
+            line_b = line_b[4:]
+        idx_bracket2 = line_b.rfind(" [")
+        name2 = line_b[:idx_bracket2].rstrip("*").rstrip() if idx_bracket2 != -1 else "Unknown"
     
     # Extract Character B Anime/Artist
-    line3 = lines[3]
-    if line3.startswith("*") and line3.endswith("*"):
-        anime2 = line3[1:-1]
+    line_anime_b = lines[idx_b + 1]
+    if line_anime_b.startswith("*") and line_anime_b.endswith("*"):
+        anime2 = line_anime_b[1:-1]
     else:
-        anime2 = "from Unknown"
+        anime2 = line_anime_b
         
-    author_mention = lines[4]
-    logger.info(f"[WAIFU-VOTE] Parsed - Name1: {name1} ({anime1}), Name2: {name2} ({anime2}), Author: {author_mention}")
+    # Rebuild dynamic voter lines
+    voters_a_str = ""
+    if votes_a_users:
+        voters_a_str = "\n" + "\n".join(f"• <@{uid}>" for uid in votes_a_users)
+        
+    voters_b_str = ""
+    if votes_b_users:
+        voters_b_str = "\n" + "\n".join(f"• <@{uid}>" for uid in votes_b_users)
+        
+    logger.info(f"[WAIFU-VOTE] Parsed - Name1: {name1} ({anime1}), Name2: {name2} ({anime2})")
     
-    # Rebuild description with new percentages
+    # Rebuild description with new percentages and dynamic voters
     desc_lines = [
         f"🇦 **{name1} [{pct_a} %]**",
-        f"*{anime1}*",
+        f"*{anime1}*{voters_a_str}",
         "",
         f"🇧 **{name2} [{pct_b} %]**",
-        f"*{anime2}*",
-        "",
-        f"{author_mention}"
+        f"*{anime2}*{voters_b_str}"
     ]
     
     new_embed = discord.Embed(
@@ -6260,8 +6357,7 @@ async def handle_waifu_voting_reaction(payload):
         color=embed.color
     )
     new_embed.set_image(url="attachment://comparison.png")
-    if embed.thumbnail and embed.thumbnail.url:
-        new_embed.set_thumbnail(url=embed.thumbnail.url)
+    new_embed.set_thumbnail(url=embed.thumbnail.url if (embed.thumbnail and embed.thumbnail.url) else "https://cdn.discordapp.com/emojis/1509890494539370597.gif")
         
     try:
         await message.edit(embed=new_embed)
@@ -6269,13 +6365,148 @@ async def handle_waifu_voting_reaction(payload):
     except Exception as e:
         logger.error(f"[WAIFU-VOTE] Failed to update voting embed: {e}")
 
+async def handle_wyr_voting_reaction(payload):
+    if payload.user_id == bot.user.id:
+        return
+    emoji_str = str(payload.emoji)
+    if emoji_str not in ["🅰️", "🅱️", "🅰", "🅱"]:
+        return
+        
+    channel = bot.get_channel(payload.channel_id)
+    if not channel:
+        try:
+            channel = await bot.fetch_channel(payload.channel_id)
+        except Exception as e:
+            logger.error(f"[WYR-VOTE] Failed to fetch channel {payload.channel_id}: {e}")
+            return
+            
+    try:
+        message = await channel.fetch_message(payload.message_id)
+    except Exception as e:
+        logger.error(f"[WYR-VOTE] Failed to fetch message {payload.message_id}: {e}")
+        return
+        
+    if not message.author or message.author.id != bot.user.id:
+        return
+        
+    if not message.embeds:
+        return
+        
+    embed = message.embeds[0]
+    if not embed.title or embed.title != "Would you rather ...":
+        return
+
+    logger.info(f"[WYR-VOTE] User {payload.user_id} reacted with {emoji_str} on message {message.id}")
+
+    is_a = emoji_str in ["🅰️", "🅰"]
+    opposite_emojis = ["🅱️", "🅱"] if is_a else ["🅰️", "🅰"]
+    
+    if payload.event_type == "REACTION_ADD":
+        for r in message.reactions:
+            if str(r.emoji) in opposite_emojis:
+                async for u in r.users():
+                    if u.id == payload.user_id:
+                        try:
+                            logger.info(f"[WYR-VOTE] Removing opposite reaction {r.emoji} for user {payload.user_id}")
+                            await message.remove_reaction(r.emoji, u)
+                        except Exception as ex:
+                            logger.error(f"[WYR-VOTE] Failed to remove opposite reaction: {ex}")
+                        break
+
+    try:
+        message = await channel.fetch_message(payload.message_id)
+    except Exception as e:
+        logger.error(f"[WYR-VOTE] Failed to re-fetch message: {e}")
+        return
+
+    votes_a_users = []
+    votes_b_users = []
+    for r in message.reactions:
+        emoji_name = str(r.emoji)
+        if emoji_name in ["🅰️", "🅰"]:
+            async for u in r.users():
+                if u.id != bot.user.id:
+                    votes_a_users.append(u.id)
+        elif emoji_name in ["🅱️", "🅱"]:
+            async for u in r.users():
+                if u.id != bot.user.id:
+                    votes_b_users.append(u.id)
+                    
+    votes_a_count = len(votes_a_users)
+    votes_b_count = len(votes_b_users)
+    total = votes_a_count + votes_b_count
+    
+    if total == 0:
+        pct_a = 0
+        pct_b = 0
+    else:
+        pct_a = round((votes_a_count / total) * 100)
+        pct_b = 100 - pct_a
+        
+    if not embed.description:
+        logger.warning("[WYR-VOTE] Embed description is empty")
+        return
+        
+    lines = [line.strip() for line in embed.description.split("\n")]
+    
+    idx_a = -1
+    idx_b = -1
+    for idx, line in enumerate(lines):
+        if line.startswith("🅰️") or line.startswith("🅰"):
+            idx_a = idx
+        elif line.startswith("🅱️") or line.startswith("🅱"):
+            idx_b = idx
+            
+    if idx_a == -1 or idx_b == -1:
+        logger.warning("[WYR-VOTE] Could not find option markers in description")
+        return
+        
+    line_a = lines[idx_a]
+    line_b = lines[idx_b]
+    
+    match_a = re.search(r"(🅰️|🅰)\s*(?P<text>.*?)\s*\[\d+\s*%\]", line_a)
+    text_a = match_a.group("text").strip() if match_a else line_a
+    
+    match_b = re.search(r"(🅱️|🅱)\s*(?P<text>.*?)\s*\[\d+\s*%\]", line_b)
+    text_b = match_b.group("text").strip() if match_b else line_b
+    
+    voters_a_str = ""
+    if votes_a_users:
+        voters_a_str = "\n" + "\n".join(f"  o <@{uid}>" for uid in votes_a_users)
+        
+    voters_b_str = ""
+    if votes_b_users:
+        voters_b_str = "\n" + "\n".join(f"  o <@{uid}>" for uid in votes_b_users)
+        
+    desc_lines = [
+        f"🅰️ {text_a} [{pct_a} %]{voters_a_str}",
+        "",
+        f"🅱️ {text_b} [{pct_b} %]{voters_b_str}"
+    ]
+    
+    new_embed = discord.Embed(
+        title=embed.title,
+        description="\n".join(desc_lines),
+        color=embed.color
+    )
+    if embed.thumbnail and embed.thumbnail.url:
+        new_embed.set_thumbnail(url=embed.thumbnail.url)
+        
+    try:
+        await message.edit(embed=new_embed)
+        logger.info(f"[WYR-VOTE] Successfully updated embed for message {message.id} (A: {pct_a}%, B: {pct_b}%)")
+    except Exception as e:
+        logger.error(f"[WYR-VOTE] Failed to update WYR embed: {e}")
+
 @bot.event
 async def on_raw_reaction_add(payload):
     await handle_waifu_voting_reaction(payload)
+    await handle_wyr_voting_reaction(payload)
 
 @bot.event
 async def on_raw_reaction_remove(payload):
     await handle_waifu_voting_reaction(payload)
+    await handle_wyr_voting_reaction(payload)
 
 @bot.event
 async def on_member_join(member):

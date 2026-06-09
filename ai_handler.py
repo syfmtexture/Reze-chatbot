@@ -772,38 +772,50 @@ INSTRUCTIONS:
 
     async def get_truth_or_dare(self, mode: str) -> str:
         """Generates a unique truth or dare prompt using Llama, falling back to Qwen, then Gemini, then local list."""
+        system_prompt = """You are Reze. Sassy, teasing, slightly chaotic 19-year-old girl from India.
+You are hosting a game of Truth or Dare on Discord.
+Your task is to write a single 'Truth' question or 'Dare' challenge.
+Rules:
+1. Write cleanly: do NOT use internet slang, chat abbreviations (like 'u', 'ur', 'rn', 'omg', 'lol'), or emojis. Just write the question or dare cleanly in lowercase.
+2. Make it engaging, bold, slightly chaotic, and funny. SFW but not generic or boring.
+3. Return ONLY the question/dare itself. Do NOT include any prefixes (like "truth:" or "dare:"), no quotes, no explanations.
+"""
         if mode.lower() == "truth":
-            system_prompt = "You are a fun party game host."
             topics = [
-                "secrets", "embarrassing moments", "crushes", "hobbies", "school/college",
-                "friendship", "first impressions", "lies", "guilty pleasures", "fears",
-                "music taste", "chat habits", "romantic interest", "weird food combinations"
+                "cringiest crush story", "illegal sounding search history", "server confessions / secrets",
+                "fake laughing / social lies", "unpopular opinions that could get you banned",
+                "browser history / internet habits", "stalking server members", "weird food combinations / crimes",
+                "childhood lies / secrets", "discord drama / opinions"
             ]
             random_topic = random.choice(topics)
-            prompt = f"Generate a single, unique, fun, and slightly embarrassing 'Truth' question related to {random_topic} for a Discord game of Truth or Dare. It should be SFW and engaging for young adults. Return ONLY the question. No prefix, no quotation marks, no explanations. Random seed: {random.randint(1, 1000000)}"
+            prompt = f"Generate a single, unique, fun, and slightly chaotic 'Truth' question about: '{random_topic}'. Write cleanly in lowercase. Do NOT use internet slang, emojis, or abbreviations (like 'u', 'ur', 'rn', 'omg', 'lol'). Return ONLY the question. Random seed: {random.randint(1, 1000000)}"
             default_fallback = random.choice([
-                "What is the most embarrassing thing you've done in public?",
-                "Who is your secret crush in this server?",
-                "What is your biggest fear?",
-                "What is the worst lie you've ever told?",
-                "What is your most useless talent?"
+                "what is the cringiest thing you have ever said to someone to try and sound cool?",
+                "be honest, who in this server has the absolute worst takes? you do not have to tag them.",
+                "what is the most illegal-sounding search in your browser history that is actually totally innocent?",
+                "have you ever fake-laughed or pretended to care about someone's yapping in this chat?",
+                "what is a secret opinion you hold that would genuinely get you banned from this server?",
+                "what is the absolute worst food crime you have committed?",
+                "have you ever secretly stalked someone's profile in this server?"
             ])
         else:
-            system_prompt = "You are a fun party game host."
             topics = [
-                "changing nickname", "sending a funny message", "sharing a meme",
-                "making a silly statement in chat", "confessing a harmless secret",
-                "sending a screenshot of something harmless", "typing with a funny restriction",
-                "singing or reading a line in a voice note"
+                "funny/cringe nickname changes", "sending unhinged out-of-context dms", "typing restrictions (all caps, emojis)",
+                "confessing love to bot / inanimate object", "harmless trolling of other server members",
+                "sharing the most bizarre meme in their gallery", "bad drawings of server members",
+                "unhinged but harmless claims in chat"
             ]
             random_topic = random.choice(topics)
-            prompt = f"Generate a single, unique, fun, and harmless 'Dare' challenge related to {random_topic} that can be done on Discord. It should be SFW and engaging for young adults. Return ONLY the dare task. No prefix, no quotation marks, no explanations. Random seed: {random.randint(1, 1000000)}"
+            prompt = f"Generate a single, unique, fun, and chaotic 'Dare' task about: '{random_topic}'. Write cleanly in lowercase. Do NOT use internet slang, emojis, or abbreviations (like 'u', 'ur', 'rn', 'omg', 'lol'). Return ONLY the dare task. Random seed: {random.randint(1, 1000000)}"
             default_fallback = random.choice([
-                "Change your nickname in this server to 'Makima's Loyal Dog' for 24 hours.",
-                "Send the 10th photo in your camera roll to this chat.",
-                "Bark like a dog in a voice channel for 10 seconds.",
-                "Describe your worst habit in detail.",
-                "Send a message to a random person in this server saying 'I know what you did last summer'."
+                "change your server nickname to 'professional simp' or 'certified yapper' for the next 24 hours.",
+                "send a direct message to the server owner saying 'we need to talk' and then do not reply for the next hour.",
+                "type exclusively in all caps for the next 15 minutes.",
+                "post the absolute most out-of-context image or meme from your gallery right now.",
+                "send a message to a random member in this server saying 'i know what you did' and never explain it.",
+                "type using only emojis for your next 5 messages in chat.",
+                "confess your undying love to a discord bot in public chat right now, make it dramatic.",
+                "draw a stick figure of the person who requested this command in MS Paint in under 1 minute and post it."
             ])
 
         # Try Llama first
@@ -873,5 +885,74 @@ Note: Do NOT mistake common English greetings (like 'hi', 'he', 'go', 'no') at t
                 self._rotate_client()
                 continue
         raise RuntimeError("All Gemini API keys failed for translation.")
+
+    async def get_would_you_rather(self) -> tuple[str, str]:
+        """Generates a Would You Rather question containing Option A and Option B."""
+        system_prompt = """You are Reze. Sassy, teasing, slightly chaotic 19-year-old girl from India.
+You are hosting a game of Would You Rather on Discord.
+Your task is to write a single 'Would You Rather' question with two options (Option A and Option B).
+Rules:
+1. Write cleanly: do NOT use internet slang, chat abbreviations (like 'u', 'ur', 'rn', 'omg', 'lol'), or emojis. Write the options cleanly in lowercase.
+2. The options should be balanced, creative, funny, and slightly chaotic, but SFW.
+3. Return the response in this exact format: Option A | Option B.
+   Example: sneeze glitter | hiccup bubbles
+4. Do NOT include any prefixes, numbering, punctuation at the end, or explanations.
+"""
+        topics = [
+            "weird physical traits", "odd daily inconveniences", "bizarre superpowers",
+            "socially awkward scenarios", "extreme food choices", "gaming dilemmas",
+            "funny lifestyles", "unexpected time travel consequences"
+        ]
+        random_topic = random.choice(topics)
+        prompt = f"Generate a unique and funny 'Would You Rather' question related to '{random_topic}'. Return ONLY Option A | Option B in lowercase. Random seed: {random.randint(1, 1000000)}"
+        
+        default_fallbacks = [
+            ("sneeze glitter", "hiccup bubbles"),
+            ("always speak in rhymes", "always shout everything you say"),
+            ("have a permanent unskippable theme song play wherever you go", "have a narrator describe everything you do in a dramatic voice"),
+            ("only be able to eat cold soup for the rest of your life", "only be able to drink warm soda for the rest of your life"),
+            ("always run everywhere instead of walking", "always crawl backwards instead of walking"),
+            ("have wheels for feet", "have springs for legs"),
+            ("lose the ability to use discord", "lose the ability to play any video games")
+        ]
+        
+        async def parse_response(text: str) -> tuple[str, str]:
+            if not text:
+                return random.choice(default_fallbacks)
+            text = text.strip().strip('*\"\' ')
+            if "|" in text:
+                parts = text.split("|", 1)
+                opt_a = parts[0].strip().strip('*\"\' ')
+                opt_b = parts[1].strip().strip('*\"\' ')
+                if opt_a and opt_b:
+                    return opt_a, opt_b
+            return random.choice(default_fallbacks)
+
+        # Try Llama first
+        if self.groq_api_keys:
+            try:
+                res = await self._get_groq_response(prompt, system_prompt, model="llama-3.3-70b-versatile", temperature=1.0)
+                return await parse_response(res)
+            except Exception as e:
+                print(f"Llama WYR generation failed: {e}. Trying Qwen fallback...")
+                try:
+                    res = await self._get_groq_response(prompt, system_prompt, model="qwen-2.5-32b-instruct", temperature=1.0)
+                    return await parse_response(res)
+                except Exception as e2:
+                    print(f"Qwen fallback failed: {e2}. Trying Gemini fallback...")
+
+        # Try Gemini fallback
+        try:
+            client = self._get_current_client()
+            response = await client.aio.models.generate_content(
+                model=self.model,
+                contents=prompt,
+                config=types.GenerateContentConfig(temperature=1.0)
+            )
+            raw_text = response.text if response.text else ""
+            return await parse_response(raw_text)
+        except Exception as e3:
+            print(f"Gemini fallback failed: {e3}. Using local fallback.")
+            return random.choice(default_fallbacks)
 
 
