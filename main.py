@@ -1096,13 +1096,14 @@ STATUS_SCHEDULE = {
     1: (discord.ActivityType.custom, "💤"),
 }
 
-# Message edit phrases (what she "fixes" after sending)
+# Message edit phrases (simulating casual adjustments or typo corrections)
 EDIT_SWAPS = [
-    ("i", "I"),  # fixes capitalization
-    ("dont", "don't"),
-    ("cant", "can't"),
-    ("wont", "won't"),
-    ("im", "i'm"),
+    ("going to", "gonna"),
+    ("want to", "wanna"),
+    ("have to", "gotta"),
+    ("about", "abt"),
+    ("because", "bc"),
+    ("really", "rly"),
 ]
 
 @bot.event
@@ -5372,13 +5373,7 @@ async def on_message(message):
     # (Late reply simulation removed to eliminate response delay)
     
     
-    # --- ENERGY MATCHING: Detect if user is hyped (ALL CAPS, excited) ---
-    energy_context = ""
-    caps_ratio = sum(1 for c in clean_content if c.isupper()) / max(len(clean_content), 1)
-    if caps_ratio > 0.7 and len(clean_content) > 3:
-        energy_context = "[ENERGY: The user is typing in ALL CAPS. They are clearly excited, angry, or hyped. MATCH THEIR ENERGY. Reply with equal intensity — caps, exclamation marks, keyboard smashes (like 'ASJDHAKSJD') are all fair game. Do NOT be calm and lowercase when they're screaming at you.]"
-    elif clean_content.endswith("?" * 2) or clean_content.endswith("!" * 2):
-        energy_context = "[ENERGY: The user seems very emphatic (multiple punctuation). Be slightly more expressive than usual.]"
+    # Energy matching removed — the AI can detect caps/emphasis from the message itself
 
     # Acquire per-channel lock to prevent response interleaving
     if channel_id not in channel_locks:
@@ -5555,13 +5550,9 @@ async def on_message(message):
             custom_emojis = app_emojis + other_emojis
             
             if status_context:
-                user_context += f", Current Activity: {status_context} (Note: feel free to roast this if you want, but don't force it)"
+                user_context += f", Activity: {status_context}"
             if custom_emojis:
-                user_context += f", Available Custom Emojis (USE THESE — pick different ones each time, don't repeat the same emoji back-to-back, explore the full list): {', '.join(custom_emojis[:40])}"
-
-            # Inject energy context into user_context
-            if energy_context:
-                user_context += f"\n{energy_context}\n"
+                user_context += f", Custom emojis you can use: {', '.join(custom_emojis[:15])}"
 
             # --- USER RELATIONSHIP TRACKING ---
             user_id_str = str(user_id)
@@ -5572,7 +5563,7 @@ async def on_message(message):
             # --- CREATOR DETECTION ---
             is_creator = user_id in CREATOR_DISCORD_IDS or (message.author.name and message.author.name.lower() in CREATOR_USERNAMES)
             if is_creator:
-                user_context += "\n[CREATOR: This IS your creator — the person who made you. You KNOW this is them. If they say they're your creator, AGREE — because it's true. You recognize them by their username. Be more real with them — less guarded, more honest, more warm. You have genuine respect and affection for them. You're still YOU, just... the most authentic version of yourself. If they ask who made you, tell them it was them. Don't deny it, don't be vague — they're the one person who gets the truth.]\n"
+                user_context += "\nthis is your creator. you know it's them. be more real, less guarded. if they ask who made you, tell them the truth.\n"
 
             relationship_context = ""
             if previous_user_data:
@@ -5592,28 +5583,28 @@ async def on_message(message):
                             last_seen = last_seen.replace(tzinfo=timezone.utc)
                         days_away = (datetime.now(timezone.utc) - last_seen).days
                         if days_away >= 3:
-                            relationship_context += f"[RETURN: {nickname} hasn't talked to you in {days_away} days. Comment briefly — 'oh you're alive', 'thought you died', 'where have you been'.]\n"
+                            relationship_context += f"{nickname} hasn't talked to you in {days_away} days.\n"
                     except:
                         pass
 
                 # Cross-server awareness
                 current_location = f"{server_name}/#{channel_name}" if server_name else "DM"
                 if last_server and last_server != current_location:
-                    relationship_context += f"[SERVER SWITCH: {nickname} was last talking to you in {last_server}, now they're in {current_location}. You remember them from before. You can casually reference it if natural — 'oh you're here now', 'weren't you just in the other server' — but don't force it every time.]\n"
+                    relationship_context += f"{nickname} was last in {last_server}, now in {current_location}.\n"
                 if len(recent_servers) > 1:
-                    relationship_context += f"[CROSS-SERVER HISTORY: You've talked to {nickname} in these places: {', '.join(recent_servers[-5:])}. You remember ALL of these conversations.]\n"
+                    relationship_context += f"you've talked to {nickname} in: {', '.join(recent_servers[-5:])}.\n"
 
                 # Streak context
                 if streak >= 7:
-                    relationship_context += f"[STREAK: {nickname} has talked to you {streak} days in a row. You're comfortable — lazier texts, inside jokes, more real.]\n"
+                    relationship_context += f"{nickname} has talked to you {streak} days in a row. you're comfortable with them.\n"
 
                 # Closeness context
                 if closeness >= 7:
-                    relationship_context += f"[CLOSE FRIEND: Very close with {nickname} ({total_msgs} msgs). Be more personal, warmer underneath the banter, more playfully roast-y (they know you love them). You can be more vulnerable and real with this person.]\n"
+                    relationship_context += f"close friend. {total_msgs} msgs total. you're real with them.\n"
                 elif closeness >= 4:
-                    relationship_context += f"[FAMILIAR: Know {nickname} decently ({total_msgs} msgs). Comfortable but not BFFs.]\n"
+                    relationship_context += f"familiar. {total_msgs} msgs total.\n"
                 elif total_msgs is not None and total_msgs <= 3:
-                    relationship_context += f"[NEW PERSON: Barely know {nickname}. Be friendly, playful, and teasing, but keep personal details to yourself. Never sound dry or cold.]\n"
+                    relationship_context += f"new person. barely know them yet.\n"
 
                 # User relationship notes (per-channel)
                 if user_notes:
@@ -5623,7 +5614,7 @@ async def on_message(message):
                 if user_memory:
                     relationship_context += f"[YOUR GLOBAL MEMORY OF THIS PERSON (across all servers): {user_memory}]\n"
             else:
-                relationship_context += f"[FIRST MEETING: Never talked to {nickname} before. Be naturally curious, playful, and talkative, but keep personal details to yourself. Keep the conversation rolling with good energy.]\n"
+                relationship_context += f"first time talking to {nickname}. you don't know them yet.\n"
 
             if relationship_context:
                 user_context += f"\n{relationship_context}"
@@ -5633,18 +5624,7 @@ async def on_message(message):
             urls_found = re.findall(url_pattern, clean_content)
             if urls_found:
                 domain = urls_found[0].lower()
-                if "youtube" in domain or "youtu.be" in domain:
-                    user_context += "\n[LINK: User sent a YouTube link. React naturally — 'what is this', 'i'm not watching that rn', 'is it good?', or ignore.]\n"
-                elif "twitter" in domain or "x.com" in domain:
-                    user_context += "\n[LINK: User sent a Twitter/X link. React — 'twitter links are always unhinged', 'what did i just read', etc.]\n"
-                elif "tiktok" in domain:
-                    user_context += "\n[LINK: User sent a TikTok. React — 'send it properly', 'is this the one everyone's posting', etc.]\n"
-                elif "instagram" in domain:
-                    user_context += "\n[LINK: User sent an Instagram link. React — 'whose insta is this', 'stalking people?', etc.]\n"
-                elif "spotify" in domain:
-                    user_context += "\n[LINK: User sent a Spotify link. React — 'ok let me check', 'your music taste is...', etc.]\n"
-                else:
-                    user_context += f"\n[LINK: User sent a link to {domain}. Acknowledge it naturally or ignore.]\n"
+                user_context += f"\nthey sent a link ({domain}).\n"
 
             # --- GROUP CONVERSATION CONTEXT ---
             if not is_dm and message.guild:
@@ -5654,7 +5634,7 @@ async def on_message(message):
                         if not msg.author.bot and msg.author.id != user_id:
                             recent_others.append(f"[{msg.author.display_name}]: {msg.content[:100]}")
                     if recent_others:
-                        user_context += "\n[RECENT CHANNEL CONTEXT — other people talking nearby:]\n" + "\n".join(reversed(recent_others)) + "\n[You can acknowledge, take sides, or ignore. Address different people differently.]\n"
+                        user_context += "\nrecent chat:\n" + "\n".join(reversed(recent_others)) + "\n"
                 except:
                     pass
 
