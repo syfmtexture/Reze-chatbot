@@ -5805,8 +5805,15 @@ async def on_message(message):
                             except Exception as mod_err:
                                 logger.error(f"Moderation Action Failed: {mod_err}")
 
-            # Strip reaction and moderation tags from response
-            response = re.sub(r'\[(?:REACT|KICK|BAN|TIMEOUT):.*?\]', '', response, flags=re.IGNORECASE | re.DOTALL).strip()
+            # --- Dynamic Self-Ignore/Block Parsing ---
+            ignore_match = re.search(r'\[(?:IGNORE|BLOCK)(?::\s*(\d+))?\]', response, re.IGNORECASE)
+            if ignore_match:
+                duration_mins = int(ignore_match.group(1)) if ignore_match.group(1) else random.randint(15, 60)
+                grudge_list[user_id] = time.time() + (duration_mins * 60)
+                logger.info(f"Reze decided to ignore/block {message.author.display_name} ({user_id}) for {duration_mins} minutes.")
+
+            # Strip reaction, moderation, and ignore/block tags from response
+            response = re.sub(r'\[(?:REACT|KICK|BAN|TIMEOUT|IGNORE|BLOCK)(?::.*?)?\]', '', response, flags=re.IGNORECASE | re.DOTALL).strip()
 
             # --- Hardcoded Image Cooldown Pipeline ---
             if channel_id not in ai.channel_state:
