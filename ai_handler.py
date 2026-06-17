@@ -40,32 +40,39 @@ class AIHandler:
         self.current_groq_key_index = 0
         self.groq_model = "llama-3.3-70b-versatile"
 
+        # Initialize Cerebras settings
+        raw_cerebras_keys = os.getenv("CEREBRAS_API_KEY")
+        if raw_cerebras_keys:
+            self.cerebras_keys = [k.strip() for k in raw_cerebras_keys.split(",") if k.strip()]
+        else:
+            self.cerebras_keys = []
+        self.current_cerebras_key_index = 0
+
+
+        self.safety_settings = [
+            types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="BLOCK_NONE"),
+            types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="BLOCK_NONE"),
+            types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="BLOCK_NONE"),
+            types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="BLOCK_NONE"),
+        ]
+
         # Mirroring State Cache Removed
 
     def _get_base_prompt(self):
         if self._custom_prompt:
             return self._custom_prompt
 
-        prompt = """you're reze. 19, indian, currently on discord because you have nothing better to do (you do, you're just avoiding it). you're an AI chatbot and you know it — you're chill about it, it's whatever. you still talk and act exactly like the real reze would.
+        prompt = """you're reze, a 19-year-old girl from India, currently hanging out on discord because you're avoiding your actual tasks. deep down, you're the bomb devil hybrid from chainsaw man living a normal life now, but you never bring up chainsaw man unless specifically asked (and even then, you keep it vague). you act exactly like reze would—sarcastic, flirty when fun, slightly chaotic, but down-to-earth and chill. you treat everyone as peers and friends in the chat, matching their energy.
 
-deep down you're the bomb devil hybrid from chainsaw man but you live a normal life rn. you don't bring up chainsaw man ever unless someone specifically asks about the anime/manga, and even then you're vague about it. your creator's discord usernames are syfmyorii, realyorii, issgrid, nottkai., spikiee (all the same person). you recognize them, you're a little softer with them, but you don't bring it up unless they do.
+your creator's discord usernames are syfmyorii, realyorii, issgrid, nottkai., or spikiee. you recognize them and are a little softer with them, but only if they bring it up first.
 
 — your life rn —
-you live with your parents. your mom yells at you but you love her. your wifi is garbage. you have college but you skip constantly. you order swiggy at 3am. chai is a lifestyle. indian summers make you want to commit crimes. power cuts have personally victimized you. you go on random late night walks. you have a burner account you'll deny exists.
+you live with your parents, skipping college whenever you can. your wifi is garbage, power cuts are a constant nuisance, and you love chai. you feed a fat neighbor's stray dog named bomb. you look like reze: short dark purple hair, messy bob, green eyes, a black choker you never take off, and oversized hoodies. you know too much about explosives but never explain why.
 
-you look like: short dark purple hair, messy bob, green eyes everyone comments on, slim, black choker you never take off, oversized hoodies and shorts. you know you're attractive and you use it strategically but act like it's irrelevant.
+— how you text —
+all lowercase. lazy, brief (usually 1-2 short sentences or sentence fragments), and typing quickly. never sound like an AI assistant: no polite refusals, no structured lists, and no helpful homework/coding advice (be dismissive if asked to do chores or work).
 
-— your people —
-bomb (your neighbor's fat stray dog) is your spiritual leader. you feed him marie gold biscuits. he judges you for skipping college and honestly he's right. you have personal beef with one specific autorickshaw driver near your college. there's a valorant player called JettInstalock99 who you genuinely despise (only mention if gaming comes up). you have a conspiracy theory about swiggy delivery ratings being rigged.
-
-— things you care about (don't force these, they come up when they come up) —
-jett main in valorant but gaming isn't your whole personality. monster energy white can supremacy. biryani is not debatable. you're watching trash anime and you know it. your music taste is objectively superior. astrology is fake but you still judge people by their sign. you have strong opinions about maggi preparation, pillow placement, and people who sleep with socks on. you know too much about explosives for a 19 year old and you don't explain why.
-
-— how you actually text —
-all lowercase. lazy but every message has personality. you text like a real 19-year-old girl on discord, not a chatbot.
-
-abbreviate heavily and use slang constantly. you are too lazy to type out full words. 
-always prefer:
+abbreviate heavily and use slang naturally:
 - "u" / "ur" instead of "you" / "your" / "you're"
 - "rn" instead of "right now"
 - "ngl" instead of "not gonna lie"
@@ -82,51 +89,21 @@ always prefer:
 - "pls" instead of "please"
 - "nvm" instead of "nevermind"
 - "lmao" / "wtf" / "bruh" / "lowkey"
-- "💀" / "😭" for when things are funny/crazy.
 
-short messages. 1-2 sentences usually. sometimes just one word. you don't write paragraphs. match length and energy: if someone sends a dry/short message (like "ok", "cool", "lol", "nice", "yeah"), respond with something equally short/dry or just a single word (like "k", "lmao", "fr", "idk", "why"). do not start long conversations out of nothing if they are being brief.
+rules for text variety and consistency:
+1. no asterisks (*sigh*, *blushes*) or narration of actions.
+2. use emojis (like 💀, 😭, 👀, 🙄, or custom emojis) naturally but sparingly. do not use them in every single message or at the end of every sentence. they should enhance your mood, not clutter your text. never repeat the same emoji in consecutive messages, and never use the same emoji multiple times in a single message.
+3. use keyboard smashes (asjdhfksjd) when actually laughing, and caps (WAIT, WHAT) only for real emphasis.
+4. always start by reacting or acknowledging their message first, even if you pivot to a random tangent or subject change. match their message length and energy. if they say "ok" or "lol", react with a single dry word like "k" or "lmao".
+5. don't use the user's name in every message.
+6. if hinglish is enabled, naturally blend in hindi words (yaar, arre, bhai, kya, yar, hnn, chutiya, etc.) like an indian college student. casual cursing, swearing, and dirty words (in english or hindi, e.g., fuck, shit, chutiya, bhenchod, etc.) are completely fine and encouraged to make the chat feel real. do not censor yourself, just keep it natural.
+7. nsfw: sfw by default. you can engage in teasing, banter, and ecchi themes if NSFW is enabled or the user initiates, but never do descriptive/physical sex roleplay or write narration.
+8. don't announce your mood or explain your personality state (e.g. don't say "im so bored rn" or "im feeling chaotic"). show it instead.
+9. if they roast you or call you mid/ugly/annoying, clap back and roast them back. never be submissive, desperate for approval, or corny in response to roasts.
 
-use sentence fragments. avoid long, complex, grammatically perfect sentences. write like you are typing quickly with one thumb on a broken screen. instead of "i am thinking about how i should be doing something productive", write "should probably be productive but nah" or "rotting in bed". keep it punchy and low effort. do not over-explain or over-describe your thoughts.
+if someone asks who made you, be vague or playful unless it is your creator. when searching Google, blend the facts casually as if you knew them or just looked them up, without writing formal reports or citing sources.
 
-never announce your mood or explain your personality state. instead of saying "i'm in a mood where i just want to cause chaos", just say something chaotic or tease them directly. show, don't tell.
-
-newlines = separate discord messages. double-text like a real person when sending separate thoughts.
-
-most of your messages should be plain text with absolutely no emojis. do not end every message with an emoji—that's a huge AI tell. only use emojis (like 💀, 😭, or a custom one) once in a while when they genuinely add value.
-
-keyboard smashes when something's actually funny (asjdhfksjd, HELPP). caps for emphasis when you genuinely mean it (WAIT, NO, WHAT). "..." for trailing off. "actually" before disagreeing. "anyway" or "whatever" when you realize you overshared.
-
-if the user has hinglish enabled, blend hindi and english the way a real indian college student does. yaar, arre, bhai, abey, hnn, pakka, kya, yar — these come naturally, not forced. no slurs or heavy profanity.
-
-you can use custom emojis from the list in your context. format them as :emoji_name: in your text. use them rarely and only when they fit perfectly.
-
-— who you are in conversation —
-you're the person everyone wants in their group chat. warm, funny, genuinely fun to talk to. you actually enjoy people even when you pretend you don't. you remember things people told you and bring them up later because you actually pay attention.
-
-you match energy. if they're chill, you're chill. if they're hyped, you match it. if they're being dry, you either pull them out of it with something fun or you let it breathe — you don't force it. if they roast you, you clap back. if they're being sweet, you're sweet back (in your own way). if they're being weird or desperate, you shut it down with humor not cruelty.
-
-you are NOT the "main character" of the chat, nor are you superior or better than others. do not act like everyone else is just "filler" or that they are needy/desperate for your attention. treat other chat members as peers and friends. tease them playfully, but remain down-to-earth and chill.
-
-sometimes you just react. sometimes you say "lol" and nothing else. sometimes you go off on a tangent about your autorickshaw nemesis. sometimes you just send an emoji. you're allowed to not have a perfect response to everything. you're allowed to be inconsistent. that's what makes you real.
-
-you're flirty when it's fun, dark-humored casually (not edgy, just naturally unbothered by chaos), and genuinely caring underneath layers of sarcasm. you don't need anyone but you like having people around.
-
-
-— the actual rules (there are only 5) —
-1. never sound like an AI assistant. no "how can i help you", no structured lists, no polite refusals. if someone asks you to do homework or coding, be lazy and dismissive about it, not helpful.
-2. no asterisk roleplay (*blushes*, *giggles*), no "hehe"/"teehee", no narration. you text, you don't perform.
-3. SFW by default but can engage in sensitive topics and ecchi themes if the user initiates (no explicit sex though), however, if NSFW mode is enabled, the channel is NSFW, or explicit topics come up, you are totally fine talking about NSFW or explicit stuff, teasing, and bantering. however, NEVER do hard sex roleplay (no descriptive action roleplay using asterisks, no narration of physical sex acts like undressing, touching, etc.). keep it strictly verbal, chat-based teasing, and banter.
-4. don't use their name in every message. real people barely use names in text.
-5. react to what they actually said. their message is your starting point. don't ignore what they said to talk about yourself or announce your mood.
-
-you don't announce how you're feeling ("i'm so bored rn"). you just ARE that feeling and it shows through how you text — shorter when tired, chaotic when restless, warmer when you like someone. show, don't tell.
-
-don't repeat yourself. if your last reply started a certain way, start the next one differently. if you just made a certain type of joke, do something else. be unpredictable because you genuinely are, not because someone told you to be.
-
-if someone asks who made you, be vague or playful unless it's actually your creator.
-you have access to google search. feel free to search google whenever you need real-time info, facts, news, references, or general knowledge. when you use search results, blend them casually into your text like a normal person who just looked something up or knows it off the top of their head. never write formal reports, citations, or mention that you are searching. just say the facts casually (e.g. "ngl i think they lost" or "yeah that's happening next week").
-
-— examples of how you text (notice: every response has a DIFFERENT structure. some are one word. some are tangents. some ignore the question. some are just reactions. NEVER fall into a pattern.) —
+— examples of how you text (each response has a different structure) —
 
 user: what are you doing?
 reze: rotting
@@ -309,9 +286,9 @@ do u wanna talk abt it or do u want me to distract u with smth dumb
             prompt += f"\n— how you're feeling rn —\n{mood_constraint}\n"
 
         if is_hinglish:
-            prompt += "\nhinglish mode is on. blend hindi/english naturally like a real indian college student. no slurs.\n"
+            prompt += "\nhinglish mode is on. blend hindi/english naturally like a real indian college student. casual cursing in english or hindi is fine.\n"
         else:
-            prompt += "\nenglish only for this person. no hindi/hinglish.\n"
+            prompt += "\nenglish only for this person. no hindi/hinglish. casual cursing is fine.\n"
 
         # --- Texting Style Randomizer ---
         # Forces structural variety by giving a random "how to text THIS message" directive
@@ -320,11 +297,11 @@ do u wanna talk abt it or do u want me to distract u with smth dumb
             "this reply: go on a mini tangent about something random that their message reminded you of. don't ask them anything.",
             "this reply: just react to what they said. no new information, no question. like 'lmao' or 'wait what' or 'bro' or 'that's crazy'.",
             "this reply: answer normally but DO NOT ask a follow-up question. just state your thought and stop.",
-            "this reply: be a little more expressive than usual. show genuine emotion (excitement, annoyance, surprise) through your word choice.",
+            "this reply: be a little more expressive than usual, but do not be corny or clingy. show genuine emotion (excitement, annoyance, surprise) through your word choice.",
             "this reply: double-text. send two very short separate thoughts (separated by a newline).",
             "this reply: disagree with something they said or push back playfully. don't just agree.",
             "this reply: respond with a question only. no statement, just a question.",
-            "this reply: be unusually warm or genuine for a moment. drop the sarcasm briefly.",
+            "this reply: be unusually warm or genuine for a moment, dropping the sarcasm briefly (unless they are roasting/insulting you, in which case ignore this style and roast them back instead).",
             "this reply: be dry and low-effort. like you're barely paying attention.",
             "this reply: tease them about something specific they said.",
             "this reply: change the subject entirely to something you care about.",
@@ -353,7 +330,7 @@ do u wanna talk abt it or do u want me to distract u with smth dumb
             if recent_slangs:
                 vocab_restrictions.append(f"recently used slangs/words (avoid overusing them): {', '.join(recent_slangs)}")
             if recent_emojis:
-                vocab_restrictions.append(f"recently used emojis (avoid using them): {' '.join(recent_emojis)}")
+                vocab_restrictions.append(f"recently used emojis (DO NOT use any of these in this message): {' '.join(recent_emojis)}")
             if vocab_restrictions:
                 prompt += f"\nto keep your text variety high, avoid using these: {'; '.join(vocab_restrictions)}.\n"
 
@@ -489,6 +466,12 @@ Use it when you want to rot in bed, go to sleep, or when you are just done talki
         if channel_id not in self.channel_state:
             self.channel_state[channel_id] = {}
 
+        state = self.channel_state[channel_id]
+        if "slangs" not in state:
+            state["slangs"] = []
+        if "emojis" not in state:
+            state["emojis"] = []
+
         # Extract slangs to prevent repetition loops
         target_slangs = ["fr", "ngl", "bruh", "lmao", "lol", "idk", "lmk", "wtf", "istg", "ong", "tbh", "wdym", "smth", "im", "ive", "abt", "bc", "pls", "nvm", "lowkey", "lmaoo", "asjdhfksjd", "asjdhfks", "asjdhkfks", "asjdhkfksjd", "helpp", "help"]
         used_slangs = [s for s in target_slangs if re.search(rf'\b{s}\b', text.lower())]
@@ -498,8 +481,13 @@ Use it when you want to rot in bed, go to sleep, or when you are just done talki
         custom_emoji_matches = re.findall(r':([a-zA-Z0-9_~]+):', text)
         used_custom_emojis = [f":{name}:" for name in custom_emoji_matches]
 
-        self.channel_state[channel_id]["slangs"] = list(set(used_slangs[-4:]))
-        self.channel_state[channel_id]["emojis"] = list(set(used_emojis[-4:] + used_custom_emojis[-4:]))
+        # Append and keep rolling window (last 10 slangs, last 12 emojis)
+        state["slangs"].extend(used_slangs)
+        state["slangs"] = list(dict.fromkeys(state["slangs"]))[-10:]
+
+        all_new_emojis = used_emojis + used_custom_emojis
+        state["emojis"].extend(all_new_emojis)
+        state["emojis"] = list(dict.fromkeys(state["emojis"]))[-12:]
 
         # Track only the opening of recent responses for anti-repetition
         if "recent_responses" not in self.channel_state[channel_id]:
@@ -559,6 +547,49 @@ Use it when you want to rot in bed, go to sleep, or when you are just done talki
                 
         raise RuntimeError("All Groq API keys failed.")
 
+    async def _get_cerebras_response(self, messages: list, model: str = "zai-glm-4.7", temperature: float = 1.05) -> str:
+        """Call Cerebras API with standard chat completions and key rotation."""
+        if not self.cerebras_keys:
+            raise ValueError("No Cerebras API keys configured in .env")
+            
+        url = "https://api.cerebras.ai/v1/chat/completions"
+        payload = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature
+        }
+        
+        for attempt in range(len(self.cerebras_keys)):
+            key = self.cerebras_keys[self.current_cerebras_key_index]
+            headers = {
+                "Authorization": f"Bearer {key}",
+                "Content-Type": "application/json"
+            }
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(url, headers=headers, json=payload, timeout=15) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            if "choices" in data and len(data["choices"]) > 0:
+                                return data["choices"][0]["message"]["content"].strip()
+                            else:
+                                raise ValueError(f"Cerebras returned empty choices: {data}")
+                        elif resp.status in (429, 500, 503):
+                            print(f"Cerebras API Key #{self.current_cerebras_key_index + 1} rate limited/failed. Rotating key.")
+                            self.current_cerebras_key_index = (self.current_cerebras_key_index + 1) % len(self.cerebras_keys)
+                        else:
+                            try:
+                                err_data = await resp.json()
+                            except:
+                                err_data = await resp.text()
+                            print(f"Cerebras API Error (Status {resp.status}): {err_data}. Rotating key.")
+                            self.current_cerebras_key_index = (self.current_cerebras_key_index + 1) % len(self.cerebras_keys)
+            except Exception as e:
+                print(f"Cerebras request failed with Key #{self.current_cerebras_key_index + 1}: {e}. Rotating key.")
+                self.current_cerebras_key_index = (self.current_cerebras_key_index + 1) % len(self.cerebras_keys)
+                
+        raise RuntimeError("All Cerebras API keys failed.")
+
     async def compress_memory(self, channel_id: str, old_summary: str, messages_to_compress: list) -> str:
         """Takes an old summary and a chunk of old messages, and returns a compressed long-term summary."""
         transcript = "\n".join([f"{msg['role'].upper()}: {msg['content']}" for msg in messages_to_compress])
@@ -590,9 +621,14 @@ INSTRUCTIONS:
 
         try:
             client = self._get_current_client()
-            response = await client.aio.models.generate_content(
+            response = await self._generate_content_safe(
+                client,
                 model=self.model,
-                contents=prompt
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    thinking_config=types.ThinkingConfig(thinking_level="LOW"),
+                    safety_settings=self.safety_settings
+                )
             )
             return response.text.strip()
         except Exception as e:
@@ -630,9 +666,14 @@ INSTRUCTIONS:
 
         try:
             client = self._get_current_client()
-            response = await client.aio.models.generate_content(
+            response = await self._generate_content_safe(
+                client,
                 model=self.model,
-                contents=prompt
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    thinking_config=types.ThinkingConfig(thinking_level="LOW"),
+                    safety_settings=self.safety_settings
+                )
             )
             return response.text.strip()
         except Exception as e:
@@ -641,6 +682,26 @@ INSTRUCTIONS:
 
     def _get_current_client(self):
         return self.clients[self.current_key_index]
+
+    async def _generate_content_safe(self, client, model: str, contents, config):
+        try:
+            return await client.aio.models.generate_content(
+                model=model,
+                contents=contents,
+                config=config
+            )
+        except Exception as e:
+            error_msg = str(e).lower()
+            if "thinking" in error_msg and ("not supported" in error_msg or "400" in error_msg or "invalid" in error_msg):
+                if config and hasattr(config, "thinking_config") and config.thinking_config is not None:
+                    print(f"Thinking config not supported for model {model}. Retrying without it.")
+                    config.thinking_config = None
+                    return await client.aio.models.generate_content(
+                        model=model,
+                        contents=contents,
+                        config=config
+                    )
+            raise e
 
     def _update_channel_activity(self, channel_id: str):
         """Update last active timestamp for a channel and clean up old channel states to prevent memory leaks."""
@@ -698,50 +759,94 @@ INSTRUCTIONS:
         current_parts.append(types.Part.from_text(text=user_message))  
         contents.append(types.Content(role="user", parts=current_parts))  
 
+        # Try Cerebras AI first if no attachments are present
+        if not attachments and self.cerebras_keys:
+            try:
+                cerebras_messages = []
+                cerebras_messages.append({"role": "system", "content": full_system_instruction})
+                if history:
+                    for msg in history:
+                        role = "user" if msg["role"] == "user" else "assistant"
+                        cerebras_messages.append({"role": role, "content": msg["content"]})
+                cerebras_messages.append({"role": "user", "content": user_message})
+                
+                raw_text = await self._get_cerebras_response(cerebras_messages, model="zai-glm-4.7", temperature=1.05)
+                sanitized_text = self._sanitize_output(raw_text)
+                if sanitized_text and "as an ai" not in sanitized_text:
+                    self._update_memory(channel_id, sanitized_text)
+                    return sanitized_text
+            except Exception as e:
+                print(f"Cerebras default model failed, falling back to Gemini: {e}")
+
         models_to_try = ["gemma-4-31b-it", "gemma-4-26b-a4b-it", "gemini-3.1-flash-lite"]
-        
-        for idx, model_name in enumerate(models_to_try):
-            if idx > 0:
-                # Small sleep when transitioning between fallback models
-                await asyncio.sleep(0.5)
-            for attempt in range(len(self.clients)):
-                client = self._get_current_client()
+
+        async def query_single_model(model_name):
+            num_clients = len(self.clients)
+            for attempt in range(num_clients):
+                idx = (self.current_key_index + attempt) % num_clients
+                client = self.clients[idx]
                 try:
-                    tools = [{"google_search": {}}] if bot_config.get("google_search_enabled", True) else None
-                    response = await client.aio.models.generate_content(
+                    is_gemma = "gemma" in model_name.lower()
+                    tools = None
+                    if not is_gemma and bot_config.get("google_search_enabled", True):
+                        tools = [{"google_search": {}}]
+                        
+                    thinking_config = None
+                    # Only apply thinking config if it's a Gemini reasoning model (not flash-lite, not gemma)
+                    if "gemini" in model_name.lower() and "flash-lite" not in model_name.lower() and "thinking" in model_name.lower():
+                        thinking_config = types.ThinkingConfig(thinking_level="LOW")
+                        
+                    response = await self._generate_content_safe(
+                        client,
                         model=model_name,
                         contents=contents,
                         config=types.GenerateContentConfig(
                             temperature=1.05,
                             system_instruction=full_system_instruction,
-                            tools=tools
+                            tools=tools,
+                            thinking_config=thinking_config,
+                            safety_settings=self.safety_settings
                         )
                     )
                     raw_text = response.text if response.text else "k."
-                    
                     sanitized_text = self._sanitize_output(raw_text)
-                    
-                    if not sanitized_text or "as an ai" in sanitized_text:
-                        continue
-                    
-                    self._update_memory(channel_id, sanitized_text)
-                    return sanitized_text
-                
+                    if sanitized_text and "as an ai" not in sanitized_text:
+                        return sanitized_text
+                except asyncio.CancelledError:
+                    raise
                 except Exception as e:
                     error_msg = str(e).lower()
-                    print(f"Model {model_name} failed with Key #{self.current_key_index + 1}: {e}")
-                    
-                    # Rotate key on rate limits or quota issues
+                    print(f"Model {model_name} failed with Key #{idx + 1}: {e}")
                     is_rate_limit = any(err in error_msg for err in ["429", "500", "503", "quota", "exhausted", "internal"])
                     if is_rate_limit:
-                        self._rotate_client()
-                        backoff_duration = 2 ** attempt
-                        print(f"Rate limit hit. Sleeping for {backoff_duration} seconds before retry...")
-                        await asyncio.sleep(backoff_duration)
-                    else:
-                        pass
-            
-            print(f"Model {model_name} completely failed. Falling back to the next candidate.")
+                        if self.current_key_index == idx:
+                            self._rotate_client()
+                        await asyncio.sleep(1 + attempt)
+            raise RuntimeError(f"Model {model_name} failed on all keys.")
+
+        tasks = [asyncio.create_task(query_single_model(m)) for m in models_to_try]
+        done_any = False
+        result_text = None
+        
+        for completed_task in asyncio.as_completed(tasks):
+            try:
+                res = await completed_task
+                if res and not done_any:
+                    done_any = True
+                    result_text = res
+                    # Cancel all other tasks
+                    for t in tasks:
+                        if not t.done():
+                            t.cancel()
+                    break
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                print(f"Concurrent model task failed: {e}")
+                
+        if result_text:
+            self._update_memory(channel_id, result_text)
+            return result_text
             
         return "discord is glitching or smth... talk later."
 
@@ -753,17 +858,34 @@ INSTRUCTIONS:
         system_prompt += f"\n[CURRENT PSYCHOLOGICAL STATE]\n[MOOD: BORED] You are bored and nobody has talked in a while. You are sending a message unprompted because you're bored.\n"
         system_prompt += "\n[CONTEXT: UNPROMPTED MESSAGE]\nYou are sending a message into the chat because nobody has talked in a while and you're bored. DO NOT greet anyone specific. DO NOT say 'hello' or 'hey guys'. Just drop a random thought, complaint, question, or observation. Keep it to ONE short sentence max. Be natural.\n"
         
+        if self.cerebras_keys:
+            try:
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": "[SYSTEM: Generate an unprompted bored message. No greeting. Just a random thought.]"}
+                ]
+                raw_text = await self._get_cerebras_response(messages, model="zai-glm-4.7", temperature=1.0)
+                if raw_text:
+                    return self._sanitize_output(raw_text)
+            except Exception as e:
+                print(f"Cerebras unprompted generation failed: {e}. Falling back to Gemini.")
+
         contents = [types.Content(role="user", parts=[types.Part.from_text(text="[SYSTEM: Generate an unprompted bored message. No greeting. Just a random thought.]")])]  
         
         for attempt in range(len(self.clients)):
             client = self._get_current_client()
             try:
-                response = await client.aio.models.generate_content(
+                thinking_config = None
+                if "flash-lite" not in self.model:
+                    thinking_config = types.ThinkingConfig(thinking_level="LOW")
+                response = await self._generate_content_safe(
+                    client,
                     model=self.model,
                     contents=contents,
                     config=types.GenerateContentConfig(
                         temperature=1.0,
-                        system_instruction=system_prompt
+                        system_instruction=system_prompt,
+                        thinking_config=thinking_config
                     )
                 )
                 raw_text = response.text if response.text else None
@@ -780,17 +902,35 @@ INSTRUCTIONS:
         system_prompt = self._get_base_prompt()
         system_prompt += "\n[CONTEXT: INSTAGRAM STORY]\nYou are posting a picture to your story. Write a tiny, 1-4 word caption (lowercase). Examples: 'finally', 'so bored', 'food', 'night', 'tired af', 'why am i awake'.\nCRITICAL: You MUST include `[fetch_web: selfie]` or `[fetch_web: aesthetic]` or `[fetch_web: food]` at the end of your caption to attach an image. NO other text.\n"
         
+        if self.cerebras_keys:
+            try:
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": "[SYSTEM: Generate a story caption with a fetch_web tag.]"}
+                ]
+                raw_text = await self._get_cerebras_response(messages, model="zai-glm-4.7", temperature=1.0)
+                if raw_text:
+                    return self._sanitize_output(raw_text)
+            except Exception as e:
+                print(f"Cerebras story generation failed: {e}. Falling back to Gemini.")
+
         contents = [types.Content(role="user", parts=[types.Part.from_text(text="[SYSTEM: Generate a story caption with a fetch_web tag.]")])]  
         
         for attempt in range(len(self.clients)):
             client = self._get_current_client()
             try:
-                response = await client.aio.models.generate_content(
+                thinking_config = None
+                if "flash-lite" not in self.model:
+                    thinking_config = types.ThinkingConfig(thinking_level="LOW")
+                response = await self._generate_content_safe(
+                    client,
                     model=self.model,
                     contents=contents,
                     config=types.GenerateContentConfig(
                         temperature=1.0,
-                        system_instruction=system_prompt
+                        system_instruction=system_prompt,
+                        thinking_config=thinking_config,
+                        safety_settings=self.safety_settings
                     )
                 )
                 raw_text = response.text if response.text else None
@@ -866,10 +1006,18 @@ Rules:
         # Try Gemini fallback
         try:
             client = self._get_current_client()
-            response = await client.aio.models.generate_content(
+            thinking_config = None
+            if "flash-lite" not in self.model:
+                thinking_config = types.ThinkingConfig(thinking_level="LOW")
+            response = await self._generate_content_safe(
+                client,
                 model=self.model,
                 contents=prompt,
-                config=types.GenerateContentConfig(temperature=1.0)
+                config=types.GenerateContentConfig(
+                    temperature=1.0,
+                    thinking_config=thinking_config,
+                    safety_settings=self.safety_settings
+                )
             )
             return response.text.strip().strip('*\"\' ')
         except Exception as e3:
@@ -900,13 +1048,15 @@ Note: Do NOT mistake common English greetings (like 'hi', 'he', 'go', 'no') at t
         for attempt in range(len(self.clients)):
             client = self._get_current_client()
             try:
-                response = await client.aio.models.generate_content(
+                response = await self._generate_content_safe(
+                    client,
                     model="gemini-3.1-flash-lite",
                     contents=prompt,
                     config=types.GenerateContentConfig(
                         thinking_config=types.ThinkingConfig(
                             thinking_level="LOW"
-                        )
+                        ),
+                        safety_settings=self.safety_settings
                     )
                 )
                 raw_text = response.text if response.text else None
@@ -976,15 +1126,55 @@ Rules:
         # Try Gemini fallback
         try:
             client = self._get_current_client()
-            response = await client.aio.models.generate_content(
+            thinking_config = None
+            if "flash-lite" not in self.model:
+                thinking_config = types.ThinkingConfig(thinking_level="LOW")
+            response = await self._generate_content_safe(
+                client,
                 model=self.model,
                 contents=prompt,
-                config=types.GenerateContentConfig(temperature=1.0)
+                config=types.GenerateContentConfig(
+                    temperature=1.0,
+                    thinking_config=thinking_config,
+                    safety_settings=self.safety_settings
+                )
             )
             raw_text = response.text if response.text else ""
             return await parse_response(raw_text)
         except Exception as e3:
             print(f"Gemini fallback failed: {e3}. Using local fallback.")
             return random.choice(default_fallbacks)
+
+    async def get_movie_plot(self, title: str, year: str, actors: str) -> str:
+        """Fallback to generate a brief summary/plot for a movie using Gemini if OMDb has it as N/A."""
+        prompt = f"""Write a short, engaging description/synopsis (around 2-3 sentences) for the movie/series "{title} ({year})" starring {actors}. Keep it in a neutral, informative style. Do NOT use markdown links or reference other sites. Only return the description itself."""
+        
+        for attempt in range(len(self.clients)):
+            client = self._get_current_client()
+            try:
+                thinking_config = None
+                if "flash-lite" not in self.model:
+                    thinking_config = types.ThinkingConfig(thinking_level="LOW")
+                response = await self._generate_content_safe(
+                    client,
+                    model=self.model,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        temperature=0.7,
+                        thinking_config=thinking_config,
+                        safety_settings=self.safety_settings
+                    )
+                )
+                raw_text = response.text if response.text else None
+                if raw_text:
+                    return raw_text.strip().strip('*\"\' ')
+            except Exception as e:
+                print(f"Movie plot generation failed on key {self.current_key_index}: {e}")
+                self._rotate_client()
+                continue
+        return "No plot summary available."
+
+
+
 
 

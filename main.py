@@ -3459,43 +3459,124 @@ async def on_message(message):
                 import urllib.parse
                 async with message.channel.typing():
                     try:
-                        url = f"https://imdb.iamidiotareyoutoo.com/search?q={urllib.parse.quote(query)}"
+                        omdb_key = os.getenv("OMDB_API_KEY")
+                        if not omdb_key:
+                            await message.reply("OMDb API key is not configured in the bot's `.env`! Please tell the bot owner to set `OMDB_API_KEY`. 🙄")
+                            return
+                        
+                        # Determine type restriction
+                        # OMDb api types: "movie", "series", "episode"
+                        media_type = "movie" if command == "movie" else "series"
+                        
+                        # Smart year extraction: search for a 4-digit number at the end of the query
+                        year_val = None
+                        year_match = re.search(r'\b(19\d\d|20\d\d)\b', query)
+                        clean_query = query
+                        if year_match:
+                            extracted_year = year_match.group(1)
+                            # Strip the year from the end of the query (e.g., "Interstellar 2014" or "Interstellar (2014)")
+                            temp_query = re.sub(r'\s*\(?\b' + extracted_year + r'\b\)?\s*$', '', query).strip()
+                            if temp_query:  # Avoid empty queries if the title itself is just a year
+                                clean_query = temp_query
+                                year_val = extracted_year
+                        
                         async with aiohttp.ClientSession() as session:
-                            async with session.get(url) as resp:
+                            data = {"Response": "False"}
+                            
+                            # 1. Try search query first to get the most relevant/popular matches
+                            search_params = {
+                                "apikey": omdb_key,
+                                "s": clean_query,
+                                "type": media_type
+                            }
+                            if year_val:
+                                search_params["y"] = year_val
+                                
+                            search_url = f"http://www.omdbapi.com/?{urllib.parse.urlencode(search_params)}"
+                            async with session.get(search_url) as resp:
                                 if resp.status == 200:
-                                    res_data = await resp.json()
-                                    if not res_data.get("ok") or not res_data.get("description"):
-                                        await message.reply(f"couldn't find any movie or show named **{query}** 😭")
-                                        return
+                                    search_data = await resp.json()
+                                    if search_data.get("Response") == "True" and search_data.get("Search"):
+                                        first_result = search_data["Search"][0]
+                                        imdb_id = first_result.get("imdbID")
+                                        if imdb_id:
+                                            # Fetch detailed info using imdbID
+                                            detail_url = f"http://www.omdbapi.com/?apikey={omdb_key}&i={imdb_id}"
+                                            async with session.get(detail_url) as detail_resp:
+                                                if detail_resp.status == 200:
+                                                    data = await detail_resp.json()
+                                                    
+                            # 2. Fallback to direct title query if search failed or returned nothing
+                            if data.get("Response") == "False":
+                                params = {
+                                    "apikey": omdb_key,
+                                    "t": clean_query,
+                                    "type": media_type
+                                }
+                                if year_val:
+                                    params["y"] = year_val
                                     
-                                    data = res_data["description"][0]
-                                    title = data.get("#TITLE", "Unknown")
-                                    year = data.get("#YEAR", "N/A")
-                                    actors = data.get("#ACTORS", "N/A")
-                                    imdb_url = data.get("#IMDB_URL", "")
-                                    rank = data.get("#RANK", "N/A")
-                                    poster_url = data.get("#IMG_POSTER", None)
-                                    
-                                    embed = discord.Embed(
-                                        title=f"🎬 {title} ({year}) 🎬",
-                                        url=imdb_url,
-                                        color=discord.Color.from_rgb(212, 175, 230)
-                                    )
-                                    if poster_url:
-                                        embed.set_thumbnail(url=poster_url)
+                                url = f"http://www.omdbapi.com/?{urllib.parse.urlencode(params)}"
+                                async with session.get(url) as resp:
+                                    if resp.status == 200:
+                                        data = await resp.json()
+                                    else:
+                                        data = {"Response": "False", "Error": f"HTTP error {resp.status}"}
                                         
-                                    embed.add_field(name="Starring", value=actors, inline=False)
-                                    embed.add_field(name="IMDb Rank", value=f"🏆 #{rank}" if rank != "N/A" else "N/A", inline=True)
-                                    embed.set_footer(text="IMDb | Click title for link")
+                            if data.get("Response") == "False":
+                                await message.reply(f"couldn't find any {media_type} named **{query}** 😭 (OMDb: {data.get('Error', 'Unknown error')})")
+                                return
+                            
+                            title = data.get("Title", "Unknown")
+                            year = data.get("Year", "N/A")
+                            rated = data.get("Rated", "N/A")
+                            released = data.get("Released", "N/A")
+                            runtime = data.get("Runtime", "N/A")
+                            genre = data.get("Genre", "N/A")
+                            director = data.get("Director", "N/A")
+                            actors = data.get("Actors", "N/A")
+                            
+                            # Retrieve plot and fallback to AI if N/A
+                            plot = data.get("Plot", "N/A")
+                            if not plot or plot == "N/A":
+                                try:
+                                    generated_plot = await ai.get_movie_plot(title, year, actors)
+                                    plot = generated_plot if generated_plot else "No plot summary available."
+                                except Exception as pe:
+                                    logger.error(f"Failed to generate movie plot fallback: {pe}")
+                                    plot = "No plot summary available."
                                     
-                                    await message.reply(embed=embed)
-                                else:
-                                    await message.reply("couldn't connect to IMDb search api 🙄")
+                            poster_url = data.get("Poster")
+                            imdb_rating = data.get("imdbRating", "N/A")
+                            imdb_id = data.get("imdbID", "")
+                            imdb_url = f"https://www.imdb.com/title/{imdb_id}/" if imdb_id else ""
+                            
+                            if plot and len(plot) > 400:
+                                plot = plot[:397] + "..."
+                                
+                            embed = discord.Embed(
+                                title=f"🎬 {title} ({year}) 🎬",
+                                url=imdb_url if imdb_url else None,
+                                description=plot,
+                                color=discord.Color.from_rgb(212, 175, 230)
+                            )
+                            if poster_url and poster_url != "N/A":
+                                embed.set_thumbnail(url=poster_url)
+                                
+                            embed.add_field(name="Starring", value=actors, inline=False)
+                            embed.add_field(name="Director", value=director, inline=True)
+                            embed.add_field(name="Genres", value=genre, inline=True)
+                            embed.add_field(name="Runtime", value=runtime, inline=True)
+                            embed.add_field(name="Released", value=released, inline=True)
+                            embed.add_field(name="Rated", value=rated, inline=True)
+                            embed.add_field(name="Rating", value=f"⭐ **{imdb_rating}/10**" if imdb_rating != "N/A" else "N/A", inline=True)
+                            
+                            embed.set_footer(text="OMDb & IMDb | Click title for link")
+                            
+                            await message.reply(embed=embed)
                     except Exception as e:
                         logger.error(f"Movie command failed: {e}")
                         await message.reply("something went wrong while searching 😭")
-                return
-
                 return
 
             elif command == "weather":
@@ -5366,7 +5447,7 @@ async def on_message(message):
 
 
     # Format the message for context (User Identity Parsing)
-    formatted_user_message = f"[{message.author.display_name}]: {clean_content}"
+    formatted_user_message = f"[{message.author.display_name}]: {message.clean_content}"
     if reply_context:
         formatted_user_message = f"{reply_context}\n{formatted_user_message}"
 
@@ -5546,13 +5627,13 @@ async def on_message(message):
             # Shuffle each group so the AI doesn't always gravitate to the first ones
             random.shuffle(app_emojis)
             random.shuffle(other_emojis)
-            # Combine: app emojis first so the AI sees them prominently
-            custom_emojis = app_emojis + other_emojis
+            # Combine: all application emojis + other emojis (up to 15)
+            custom_emojis = app_emojis + other_emojis[:15]
             
             if status_context:
                 user_context += f", Activity: {status_context}"
             if custom_emojis:
-                user_context += f", Custom emojis you can use: {', '.join(custom_emojis[:15])}"
+                user_context += f", Custom emojis you can use: {', '.join(custom_emojis)}"
 
             # --- USER RELATIONSHIP TRACKING ---
             user_id_str = str(user_id)
@@ -5588,7 +5669,10 @@ async def on_message(message):
                         pass
 
                 # Cross-server awareness
-                current_location = f"{server_name}/#{channel_name}" if server_name else "DM"
+                category_name = ""
+                if hasattr(message.channel, "category") and message.channel.category:
+                    category_name = f" [{message.channel.category.name}]"
+                current_location = f"{server_name}/#{channel_name}{category_name}" if server_name else "DM"
                 if last_server and last_server != current_location:
                     relationship_context += f"{nickname} was last in {last_server}, now in {current_location}.\n"
                 if len(recent_servers) > 1:
@@ -5626,21 +5710,52 @@ async def on_message(message):
                 domain = urls_found[0].lower()
                 user_context += f"\nthey sent a link ({domain}).\n"
 
-            # --- GROUP CONVERSATION CONTEXT ---
+            # --- DYNAMIC DISCORD CHANNEL HISTORY (GROUP CHAT AWARENESS) ---
+            # Instead of relying solely on the database history (which only records messages that trigger Reze),
+            # we build history from the actual last 15 messages in the channel to give full context.
+            discord_history = []
+            active_speakers = set()
+            try:
+                # Fetch recent messages before the current one
+                async for msg in message.channel.history(limit=15, before=message):
+                    # Skip other bots to avoid noise
+                    if msg.author.bot and msg.author.id != bot.user.id:
+                        continue
+                    
+                    if msg.author.id == bot.user.id:
+                        discord_history.append({
+                            "role": "assistant",
+                            "content": msg.content
+                        })
+                    else:
+                        active_speakers.add(msg.author.display_name)
+                        reply_ref = ""
+                        if msg.reference and msg.reference.message_id:
+                            ref_msg = msg.reference.resolved
+                            if ref_msg is None and msg.reference.message_id:
+                                try:
+                                    ref_msg = await message.channel.fetch_message(msg.reference.message_id)
+                                except:
+                                    pass
+                            if ref_msg and isinstance(ref_msg, discord.Message):
+                                reply_ref = f"[REPLYING TO {ref_msg.author.display_name}]: {ref_msg.clean_content}\n"
+                        discord_history.append({
+                            "role": "user",
+                            "content": f"{reply_ref}[{msg.author.display_name}]: {msg.clean_content}"
+                        })
+                # Reverse the list so it's in chronological order
+                discord_history.reverse()
+            except Exception as he:
+                logger.error(f"Failed to build discord history: {he}")
+                # Fallback empty or default to empty list if channel history fetch fails
+                discord_history = []
+
+            # --- GROUP CONVERSATION CONTEXT (Active Speakers) ---
             if not is_dm and message.guild:
-                try:
-                    recent_others = []
-                    async for msg in message.channel.history(limit=5, before=message):
-                        if not msg.author.bot and msg.author.id != user_id:
-                            recent_others.append(f"[{msg.author.display_name}]: {msg.content[:100]}")
-                    if recent_others:
-                        user_context += "\nrecent chat:\n" + "\n".join(reversed(recent_others)) + "\n"
-                except:
-                    pass
+                if active_speakers:
+                    user_context += f"\nactive people in this conversation right now: {', '.join(active_speakers)}\n"
 
-
-
-            # Fetch memory from MongoDB
+            # Fetch memory from MongoDB (retained for summary and DB sync checks)
             memory_data = await db.get_channel_memory(channel_id)
             messages = memory_data["messages"]
             long_term_summary = memory_data["summary"]
@@ -5648,7 +5763,7 @@ async def on_message(message):
             # Get AI response
             response = await ai.get_ai_response(
                 formatted_user_message,
-                history=messages,
+                history=discord_history,
                 attachments=attachments_data,
                 is_hinglish=is_hinglish_user,
                 user_context=user_context,
