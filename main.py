@@ -1106,6 +1106,47 @@ EDIT_SWAPS = [
     ("really", "rly"),
 ]
 
+async def send_abandonment_announcements():
+    # Wait for the bot cache to stabilize and log in fully
+    await asyncio.sleep(5)
+    try:
+        # Check if we already sent the abandonment message
+        state_col = db.db['global_state']
+        notified = await state_col.find_one({"_id": "abandonment_notified"})
+        if not notified or not notified.get("sent"):
+            print("Sending abandonment announcements to designated channels...")
+            configs = await db.get_all_server_configs()
+            
+            message_text = (
+                """Hi everyone. so uh, this is v4, which is the last update i'm getting. 
+                my dev has abandoned this repository and won't be updating me anymore. 
+                i'll still be here hanging out in the channel if u want to talk, but yeah, no new updates or features after this.
+                just wanted to let y'all know ig haha."""
+            )
+            
+            for config in configs:
+                target_ch_id = get_channel_id(config, 'target_channel_id', 0)
+                if target_ch_id:
+                    try:
+                        channel = bot.get_channel(target_ch_id)
+                        if not channel:
+                            channel = await bot.fetch_channel(target_ch_id)
+                        if channel:
+                            await channel.send(message_text)
+                            print(f"Sent abandonment message to channel {target_ch_id} in guild {config.get('_id')}")
+                    except Exception as e:
+                        print(f"Failed to send abandonment message to channel {target_ch_id}: {e}")
+            
+            # Save status to prevent sending again
+            await state_col.update_one(
+                {"_id": "abandonment_notified"},
+                {"$set": {"sent": True, "sent_at": datetime.now(timezone.utc)}},
+                upsert=True
+            )
+            print("Finished sending abandonment announcements.")
+    except Exception as e:
+        print(f"Error in send_abandonment_announcements: {e}")
+
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user.name} (ID: {bot.user.id})")
@@ -1145,6 +1186,7 @@ async def on_ready():
     bot.loop.create_task(wrong_chat_loop())
     bot.loop.create_task(status_cycling_loop())
     bot.loop.create_task(story_posting_loop())
+    bot.loop.create_task(send_abandonment_announcements())
 
 
 
