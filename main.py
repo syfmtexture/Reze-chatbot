@@ -5769,7 +5769,8 @@ async def on_message(message):
                 user_context=user_context,
                 channel_id=channel_id,
                 long_term_summary=long_term_summary,
-                is_nsfw=is_nsfw
+                is_nsfw=is_nsfw,
+                user_name=nickname
             )
 
             # Update channel memory in MongoDB (annotate with image metadata)
@@ -6249,8 +6250,16 @@ async def on_message(message):
                 response = re.sub(r'@(\w+)', replace_mention, response)
 
             # --- Multi-Message Splitter & Typo Generator ---
-            # Group by newlines instead of every single period to avoid 5-message spam
-            sentences = [s.strip() for s in response.split('\n') if s.strip()]
+            # Group by newlines and sentence boundaries (.!? followed by space)
+            raw_lines = [s.strip() for s in response.split('\n') if s.strip()]
+            sentences = []
+            for line in raw_lines:
+                # Split each line by sentence boundaries, preserving trailing punctuation
+                parts = re.split(r'(?<=[.!?])\s+', line)
+                for part in parts:
+                    part = part.strip()
+                    if part:
+                        sentences.append(part)
             if not sentences:
                 sentences = [response] if response else []
 

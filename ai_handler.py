@@ -61,7 +61,9 @@ class AIHandler:
             "zai-org/GLM-5.2",
             "zai-org/GLM-5.1",
             "Qwen/Qwen3.5-397B-A17B",
-            "deepseek-ai/DeepSeek-V3.2"
+            "deepseek-ai/DeepSeek-V3.2",
+            "deepseek-ai/DeepSeek-V4-Pro",
+            "zai-org/GLM-5V-Turbo"
         ]
 
 
@@ -295,7 +297,7 @@ do u wanna talk abt it or do u want me to distract u with smth dumb
                 
         return constraint
 
-    def _build_dynamic_prompt(self, user_context, is_hinglish, channel_id, long_term_summary="", is_nsfw=False):
+    def _build_dynamic_prompt(self, user_context, is_hinglish, channel_id, long_term_summary="", is_nsfw=False, user_name: str = None):
         prompt = self._get_base_prompt()
         
         # Inject Real-World Time & Context
@@ -310,10 +312,21 @@ do u wanna talk abt it or do u want me to distract u with smth dumb
         if user_context:
             prompt += f"\n— about them —\n{user_context}\n"
 
+        if user_name:
+            prompt += f"\nyou are currently replying to the message sent by {user_name}. focus on what they said and respond to them specifically. do not start your messages with their username or address them by name constantly; keep it natural as if you're chatting in a group.\n"
+
         # Mood as internal state
         mood_constraint = self._get_current_mood(channel_id, user_context, is_nsfw=is_nsfw)
         if mood_constraint:
             prompt += f"\n— how you're feeling rn —\n{mood_constraint}\n"
+
+        mood = self.get_raw_mood(channel_id)
+        if mood == "YAPPING":
+            prompt += "\n[STYLE]: you are in a yapping mood today. feel free to share a slightly longer thought, tease them, or tell a quick story. keep it fun and casual.\n"
+        elif mood == "DRUNK":
+            prompt += "\n[STYLE]: you are drunk. feel free to type slightly chaotic, unstructured thoughts with minor typos. keep it funny and random.\n"
+        else:
+            prompt += "\n[STYLE]: keep your reply casual, relaxed, and brief. write like a teenager chatting on discord—no long paragraphs or formal formatting. if you have two distinct thoughts, separate them with a single newline. keep it to 1-2 short, lazy sentences. don't yap.\n"
 
         if is_hinglish:
             prompt += "\nhinglish mode is on. blend hindi/english naturally like a real indian college student. casual cursing in english or hindi is fine.\n"
@@ -815,9 +828,9 @@ INSTRUCTIONS:
         self.current_key_index = (self.current_key_index + 1) % len(self.clients)
         print(f"Rotating to API Key #{self.current_key_index + 1}")
 
-    async def get_ai_response(self, user_message: str, history: list = None, attachments: list = None, is_hinglish: bool = False, user_context: str = None, channel_id: str = "default", long_term_summary: str = "", is_nsfw: bool = False) -> str:
+    async def get_ai_response(self, user_message: str, history: list = None, attachments: list = None, is_hinglish: bool = False, user_context: str = None, channel_id: str = "default", long_term_summary: str = "", is_nsfw: bool = False, user_name: str = None) -> str:
         self._update_channel_activity(channel_id)
-        full_system_instruction = self._build_dynamic_prompt(user_context, is_hinglish, channel_id, long_term_summary, is_nsfw=is_nsfw)
+        full_system_instruction = self._build_dynamic_prompt(user_context, is_hinglish, channel_id, long_term_summary, is_nsfw=is_nsfw, user_name=user_name)
 
         msg_lower = user_message.strip().lower()
         word_count = len(msg_lower.split())
@@ -851,8 +864,8 @@ INSTRUCTIONS:
         current_parts.append(types.Part.from_text(text=user_message))  
         contents.append(types.Content(role="user", parts=current_parts))  
 
-        # Try SiliconFlow first if no attachments are present
-        if not attachments and self.silicon_keys:
+        # Try SiliconFlow first
+        if self.silicon_keys:
             try:
                 silicon_messages = []
                 silicon_messages.append({"role": "system", "content": full_system_instruction})
@@ -860,7 +873,31 @@ INSTRUCTIONS:
                     for msg in history:
                         role = "user" if msg["role"] == "user" else "assistant"
                         silicon_messages.append({"role": role, "content": msg["content"]})
-                silicon_messages.append({"role": "user", "content": user_message})
+                
+                if attachments:
+                    import base64
+                    content_list = [{"type": "text", "text": user_message}]
+                    for att in attachments:
+                        base64_str = base64.b64encode(att["data"]).decode("utf-8")
+                        content_list.append({
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:{att['mime_type']};base64,{base64_str}"
+                            }
+                        })
+                    silicon_messages.append({"role": "user", "content": content_list})
+                else:
+                    silicon_messages.append({"role": "user", "content": user_message})
+
+                # Define models to query: only vision models if attachments are present
+                if attachments:
+                    models_to_query = [
+                        "deepseek-ai/DeepSeek-V4-Flash",
+                        "deepseek-ai/DeepSeek-V4-Pro",
+                        "zai-org/GLM-5V-Turbo"
+                    ]
+                else:
+                    models_to_query = self.silicon_models
 
                 # Define concurrent query for SiliconFlow models
                 async def query_silicon_model(model_name):
@@ -873,10 +910,11 @@ INSTRUCTIONS:
                             "Authorization": f"Bearer {key}",
                             "Content-Type": "application/json"
                         }
+                        temp = 0.95 if any(x in model_name.lower() for x in ["glm", "deepseek", "qwen"]) else 1.05
                         payload = {
                             "model": model_name,
                             "messages": silicon_messages,
-                            "temperature": 1.05
+                            "temperature": temp
                         }
                         try:
                             async with aiohttp.ClientSession() as session:
@@ -921,7 +959,7 @@ INSTRUCTIONS:
                     raise RuntimeError(f"SiliconFlow model {model_name} failed on all keys.")
 
                 # Execute concurrently
-                silicon_tasks = [asyncio.create_task(query_silicon_model(m)) for m in self.silicon_models]
+                silicon_tasks = [asyncio.create_task(query_silicon_model(m)) for m in models_to_query]
                 done_any = False
                 silicon_result = None
 
