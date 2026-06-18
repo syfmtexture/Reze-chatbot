@@ -5825,7 +5825,7 @@ async def on_message(message):
             react_match = re.search(r'\[REACT:\s*(.*?)\]', response, re.IGNORECASE)
             if react_match:
                 emoji_str = react_match.group(1).strip()
-                emoji_name = emoji_str.strip(':')
+                emoji_name = emoji_str.replace('\\', '').strip(':')
                 
                 # Hard enforcement: limit reaction spam and prevent duplicate emojis
                 if channel_id not in ai.channel_state:
@@ -5946,7 +5946,7 @@ async def on_message(message):
                 # --- Dynamic Meme Extraction ---
                 meme_match = re.search(r'\[send_meme:\s*(.*?)\]', response, re.IGNORECASE | re.DOTALL)
                 if meme_match:
-                    meme_filename = meme_match.group(1).strip()
+                    meme_filename = meme_match.group(1).replace('\\', '').strip()
                     meme_path = os.path.join("assets", "memes", meme_filename)
                     if os.path.exists(meme_path):
                         meme_to_send = discord.File(meme_path)
@@ -5964,7 +5964,7 @@ async def on_message(message):
                 # --- Dynamic Web Image Extraction ---
                 web_meme_match = re.search(r'\[fetch_web:\s*(.*?)\]', response, re.IGNORECASE | re.DOTALL)
                 if web_meme_match and not meme_to_send:
-                    query = web_meme_match.group(1).strip()
+                    query = web_meme_match.group(1).replace('\\', '').strip()
                     
                     if channel_id not in ai.channel_state:
                         ai.channel_state[channel_id] = {}
@@ -6210,11 +6210,16 @@ async def on_message(message):
             # Replaces unformatted :emoji_name: with <:emoji_name:id> (or <a:emoji_name:id>).
             # Avoids double-formatting by matching and skipping already-formatted emojis.
             # Perform case-insensitive matching to handle AI-generated name casing variations.
-            emoji_pattern = re.compile(r'(<a?:[a-zA-Z0-9_~]+:\d+>)|:([a-zA-Z0-9_~]+):')
+            # Handles escaped colons/brackets and other GLM model variations.
+            emoji_pattern = re.compile(
+                r'(<a?:[a-zA-Z0-9_~]+:\d+>)|'
+                r'(?:\\?<\s*a?\\?:([a-zA-Z0-9_~\\#]+)\\?:\\?>)|'
+                r'(?:\\?:([a-zA-Z0-9_~\\#]+)\\?:)'
+            )
             def replace_custom_emoji(match):
                 if match.group(1):
                     return match.group(1) # Already formatted, do not touch
-                e_name = match.group(2).lower()
+                e_name = (match.group(2) or match.group(3)).lower().replace('\\', '')
                 if message.guild:
                     for emoji in message.guild.emojis:
                         if emoji.name.lower() == e_name and emoji.available:

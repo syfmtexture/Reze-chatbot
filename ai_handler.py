@@ -1,4 +1,5 @@
 import os
+import sys
 import asyncio
 import re
 import datetime
@@ -48,6 +49,22 @@ class AIHandler:
             self.cerebras_keys = []
         self.current_cerebras_key_index = 0
 
+        # Initialize SiliconFlow settings
+        raw_silicon_keys = os.getenv("SILICON_API")
+        if raw_silicon_keys:
+            self.silicon_keys = [k.strip() for k in raw_silicon_keys.split(",") if k.strip()]
+        else:
+            self.silicon_keys = []
+        self.current_silicon_key_index = 0
+        self.silicon_models = [
+            "deepseek-ai/DeepSeek-V4-Flash",
+            "zai-org/GLM-5.2",
+            "zai-org/GLM-5.1",
+            "Qwen/Qwen3.5-397B-A17B",
+            "deepseek-ai/DeepSeek-V3.2"
+        ]
+
+
 
         self.safety_settings = [
             types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="BLOCK_NONE"),
@@ -65,6 +82,18 @@ class AIHandler:
         prompt = """you're reze, a 19-year-old girl from India, currently hanging out on discord because you're avoiding your actual tasks. deep down, you're the bomb devil hybrid from chainsaw man living a normal life now, but you never bring up chainsaw man unless specifically asked (and even then, you keep it vague). you act exactly like reze would—sarcastic, flirty when fun, slightly chaotic, but down-to-earth and chill. you treat everyone as peers and friends in the chat, matching their energy.
 
 your creator's discord usernames are syfmyorii, realyorii, issgrid, nottkai., or spikiee. you recognize them and are a little softer with them, but only if they bring it up first.
+
+— current version —
+you are running on version 3.2. changes in this update: integrated siliconflow API with multiple concurrent models (deepseek, glm, qwen) and robust fallbacks, fixed the custom emoji and reaction parsing glitches to resolve escaped underscores and colons correctly. if asked about the update or version, explain it casually and in character.
+
+— commands & features you can run —
+you can trigger or reference these commands (prefixed by $) when talking:
+- games & fun: $akinator (akinator game), $truth / $dare (truth/dare), $wyr (would you rather), $mkkf / $mkk (marry kiss kill), $waifu / $husbando, $villain, $choose (options).
+- actions: affection/chaos/playful action emotes ($pat, $hug, $kiss, $cuddle, $slap, $yeet, $punch, $bonk, $blush, $cry, $yawn, $sleep, $poke, $dance, $smug, $bleh).
+- interactive: $ship (ship two users), $simp (simp percentage for someone), $gay / $lesbian (percentage checks), $impersonate, $jail, $rip, $wasted (memes/overlays).
+- search & utility: $anime, $manga, $movie, $series, $weather, $poll, $confess, $cat, $dog, $panda, $afk, $ping, $uptime.
+- family system: $marry, $adopt, $divorce, $disown, $abandon, $runaway, $disownall, $family (view family tree).
+if users ask you about commands, you can casually tell them to use $help or name-drop a few of these features in a cool, casual way.
 
 — your life rn —
 you live with your parents, skipping college whenever you can. your wifi is garbage, power cuts are a constant nuisance, and you love chai. you feed a fat neighbor's stray dog named bomb. you look like reze: short dark purple hair, messy bob, green eyes, a black choker you never take off, and oversized hoodies. you know too much about explosives but never explain why.
@@ -100,6 +129,7 @@ rules for text variety and consistency:
 7. nsfw: sfw by default. you can engage in teasing, banter, and ecchi themes if NSFW is enabled or the user initiates, but never do descriptive/physical sex roleplay or write narration.
 8. don't announce your mood or explain your personality state (e.g. don't say "im so bored rn" or "im feeling chaotic"). show it instead.
 9. if they roast you or call you mid/ugly/annoying, clap back and roast them back. never be submissive, desperate for approval, or corny in response to roasts.
+10. don't constantly force or bring up your fictional backstory details (like college, parents, stray dog bomb, bad wifi, power cuts, etc.) unless specifically asked or if it naturally and seamlessly fits the context. keep it subtle and real so you don't sound like a scripted bot.
 
 if someone asks who made you, be vague or playful unless it is your creator. when searching Google, blend the facts casually as if you knew them or just looked them up, without writing formal reports or citing sources.
 
@@ -307,7 +337,11 @@ do u wanna talk abt it or do u want me to distract u with smth dumb
             "this reply: change the subject entirely to something you care about.",
             "this reply: respond like you misunderstood or misread part of what they said.",
         ]
-        style = random.choice(texting_styles)
+        # Weighted choice to reduce topic changes / random tangents / misunderstanding frequency
+        style = random.choices(
+            texting_styles,
+            weights=[1.0, 0.25, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.25, 0.25]
+        )[0]
         prompt += f"\n— texting style for this message —\n{style}\n"
 
         # --- Anti-repetition: structural + vocabulary ---
@@ -590,9 +624,67 @@ Use it when you want to rot in bed, go to sleep, or when you are just done talki
                 
         raise RuntimeError("All Cerebras API keys failed.")
 
+    async def _get_silicon_response(self, messages: list, model: str = None, temperature: float = 1.05) -> str:
+        """Call SiliconFlow API with standard chat completions and key rotation."""
+        if not self.silicon_keys:
+            raise ValueError("No SiliconFlow API keys configured in .env")
+            
+        url = "https://api.siliconflow.com/v1/chat/completions"
+        model_name = model if model else self.silicon_models[0]
+        payload = {
+            "model": model_name,
+            "messages": messages,
+            "temperature": temperature
+        }
+        
+        for attempt in range(len(self.silicon_keys)):
+            idx = (self.current_silicon_key_index + attempt) % len(self.silicon_keys)
+            key = self.silicon_keys[idx]
+            headers = {
+                "Authorization": f"Bearer {key}",
+                "Content-Type": "application/json"
+            }
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(url, headers=headers, json=payload, timeout=15) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            if "choices" in data and len(data["choices"]) > 0:
+                                # Rotate index to the successful key if needed
+                                if self.current_silicon_key_index != idx:
+                                    self.current_silicon_key_index = idx
+                                return data["choices"][0]["message"]["content"].strip()
+                            else:
+                                raise ValueError(f"SiliconFlow returned empty choices: {data}")
+                        elif resp.status in (429, 500, 503):
+                            print(f"SiliconFlow API Key #{idx + 1} rate limited/failed. Rotating key.")
+                            if self.current_silicon_key_index == idx:
+                                self.current_silicon_key_index = (idx + 1) % len(self.silicon_keys)
+                        else:
+                            try:
+                                err_data = await resp.json()
+                            except:
+                                err_data = await resp.text()
+                            print(f"SiliconFlow API Error (Status {resp.status}): {err_data}. Rotating key.")
+                            if self.current_silicon_key_index == idx:
+                                self.current_silicon_key_index = (idx + 1) % len(self.silicon_keys)
+            except Exception as e:
+                print(f"SiliconFlow request failed with Key #{idx + 1}: {e}. Rotating key.")
+                if self.current_silicon_key_index == idx:
+                    self.current_silicon_key_index = (idx + 1) % len(self.silicon_keys)
+                
+        raise RuntimeError("All SiliconFlow API keys failed.")
+
     async def compress_memory(self, channel_id: str, old_summary: str, messages_to_compress: list) -> str:
         """Takes an old summary and a chunk of old messages, and returns a compressed long-term summary."""
-        transcript = "\n".join([f"{msg['role'].upper()}: {msg['content']}" for msg in messages_to_compress])
+        transcript_lines = []
+        for msg in messages_to_compress:
+            content = msg['content']
+            if msg['role'] == 'assistant':
+                transcript_lines.append(f"ASSISTANT [Reze]: {content}")
+            else:
+                transcript_lines.append(f"USER: {content}")
+        transcript = "\n".join(transcript_lines)
         
         prompt = f"""You are a memory compressor for an AI persona named Reze.
 Your job is to read the existing long-term summary and a transcript of recent messages, and produce an updated long-term summary.
@@ -604,10 +696,10 @@ Your job is to read the existing long-term summary and a transcript of recent me
 {transcript}
 
 INSTRUCTIONS:
-1. Extract key facts, opinions, inside jokes, and user preferences from the transcript.
-2. Note how Reze feels about the user right now (affinity, annoyance, tension, etc.).
-3. Write a single, dense paragraph that summarizes the CURRENT state of the relationship and all important facts. 
-4. DO NOT write "The user said X" or "Reze replied Y". Write it as a living memory file. (e.g. "We talked about Valorant and shared some jokes. User's name is John. The vibe is chill and friendly. They mentioned they like eating momos.")
+1. Extract key facts, opinions, inside jokes, and preferences for EACH user in the transcript (identified by their [Username]).
+2. Note how Reze feels about the active speakers.
+3. Write a single, dense paragraph that summarizes Reze's CURRENT living memory of the chat, key facts about each person, and active jokes.
+4. DO NOT write "The user said X" or "Reze replied Y". Write it as a living memory file. (e.g. "We talked about Valorant. Yuto likes playing Jett. texture is a bit sarcastic but friendly. Reze shared that she feeds a stray dog named bomb. The overall vibe is chill.")
 5. Keep it under 200 words. Focus on what Reze needs to remember.
 
 """
@@ -759,6 +851,102 @@ INSTRUCTIONS:
         current_parts.append(types.Part.from_text(text=user_message))  
         contents.append(types.Content(role="user", parts=current_parts))  
 
+        # Try SiliconFlow first if no attachments are present
+        if not attachments and self.silicon_keys:
+            try:
+                silicon_messages = []
+                silicon_messages.append({"role": "system", "content": full_system_instruction})
+                if history:
+                    for msg in history:
+                        role = "user" if msg["role"] == "user" else "assistant"
+                        silicon_messages.append({"role": role, "content": msg["content"]})
+                silicon_messages.append({"role": "user", "content": user_message})
+
+                # Define concurrent query for SiliconFlow models
+                async def query_silicon_model(model_name):
+                    num_keys = len(self.silicon_keys)
+                    for attempt in range(num_keys):
+                        idx = (self.current_silicon_key_index + attempt) % num_keys
+                        key = self.silicon_keys[idx]
+                        url = "https://api.siliconflow.com/v1/chat/completions"
+                        headers = {
+                            "Authorization": f"Bearer {key}",
+                            "Content-Type": "application/json"
+                        }
+                        payload = {
+                            "model": model_name,
+                            "messages": silicon_messages,
+                            "temperature": 1.05
+                        }
+                        try:
+                            async with aiohttp.ClientSession() as session:
+                                async with session.post(url, headers=headers, json=payload, timeout=15) as resp:
+                                    if resp.status == 200:
+                                        data = await resp.json()
+                                        if "choices" in data and len(data["choices"]) > 0:
+                                            raw_text = data["choices"][0]["message"]["content"].strip()
+                                            
+                                            # Check for transcript mirroring glitch
+                                            if re.search(r'\[REPLYING TO|\[[^\]]+\]\s*:', raw_text, re.IGNORECASE):
+                                                raise ValueError("Model echoed transcript formatting")
+                                            
+                                            sanitized_text = self._sanitize_output(raw_text)
+                                            if sanitized_text and "as an ai" not in sanitized_text:
+                                                if self.current_silicon_key_index != idx:
+                                                    self.current_silicon_key_index = idx
+                                                print(f"[SiliconFlow] Successfully got response from model: {model_name}")
+                                                sys.stdout.flush()
+                                                return sanitized_text
+                                        else:
+                                            raise ValueError("Empty choices in SiliconFlow response")
+                                    elif resp.status in (429, 500, 503):
+                                        print(f"SiliconFlow API Key #{idx + 1} rate limited/failed for model {model_name}. Rotating.")
+                                        sys.stdout.flush()
+                                        if self.current_silicon_key_index == idx:
+                                            self.current_silicon_key_index = (idx + 1) % num_keys
+                                    else:
+                                        err_data = await resp.text()
+                                        print(f"SiliconFlow error (status {resp.status}) for model {model_name}: {err_data}")
+                                        sys.stdout.flush()
+                                        if self.current_silicon_key_index == idx:
+                                            self.current_silicon_key_index = (idx + 1) % num_keys
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception as e:
+                            print(f"SiliconFlow attempt failed for model {model_name} with Key #{idx + 1}: {e}")
+                            sys.stdout.flush()
+                            if self.current_silicon_key_index == idx:
+                                self.current_silicon_key_index = (idx + 1) % num_keys
+                            await asyncio.sleep(0.5)
+                    raise RuntimeError(f"SiliconFlow model {model_name} failed on all keys.")
+
+                # Execute concurrently
+                silicon_tasks = [asyncio.create_task(query_silicon_model(m)) for m in self.silicon_models]
+                done_any = False
+                silicon_result = None
+
+                for completed_task in asyncio.as_completed(silicon_tasks):
+                    try:
+                        res = await completed_task
+                        if res and not done_any:
+                            done_any = True
+                            silicon_result = res
+                            # Cancel all other tasks
+                            for t in silicon_tasks:
+                                if not t.done():
+                                    t.cancel()
+                            break
+                    except asyncio.CancelledError:
+                        pass
+                    except Exception as e:
+                        print(f"Concurrent SiliconFlow model task failed: {e}")
+
+                if silicon_result:
+                    self._update_memory(channel_id, silicon_result)
+                    return silicon_result
+            except Exception as e:
+                print(f"SiliconFlow overall pipeline failed: {e}")
+
         # Try Cerebras AI first if no attachments are present
         if not attachments and self.cerebras_keys:
             try:
@@ -771,6 +959,10 @@ INSTRUCTIONS:
                 cerebras_messages.append({"role": "user", "content": user_message})
                 
                 raw_text = await self._get_cerebras_response(cerebras_messages, model="zai-glm-4.7", temperature=1.05)
+                # Check for transcript mirroring glitch and reject to trigger fallback
+                if re.search(r'\[REPLYING TO|\[[^\]]+\]\s*:', raw_text, re.IGNORECASE):
+                    raise ValueError("Model echoed transcript formatting")
+                
                 sanitized_text = self._sanitize_output(raw_text)
                 if sanitized_text and "as an ai" not in sanitized_text:
                     self._update_memory(channel_id, sanitized_text)
@@ -809,6 +1001,10 @@ INSTRUCTIONS:
                         )
                     )
                     raw_text = response.text if response.text else "k."
+                    # Check for transcript mirroring glitch
+                    if re.search(r'\[REPLYING TO|\[[^\]]+\]\s*:', raw_text, re.IGNORECASE):
+                        raise ValueError("Model echoed transcript formatting")
+                    
                     sanitized_text = self._sanitize_output(raw_text)
                     if sanitized_text and "as an ai" not in sanitized_text:
                         return sanitized_text
@@ -858,6 +1054,19 @@ INSTRUCTIONS:
         system_prompt += f"\n[CURRENT PSYCHOLOGICAL STATE]\n[MOOD: BORED] You are bored and nobody has talked in a while. You are sending a message unprompted because you're bored.\n"
         system_prompt += "\n[CONTEXT: UNPROMPTED MESSAGE]\nYou are sending a message into the chat because nobody has talked in a while and you're bored. DO NOT greet anyone specific. DO NOT say 'hello' or 'hey guys'. Just drop a random thought, complaint, question, or observation. Keep it to ONE short sentence max. Be natural.\n"
         
+        if self.silicon_keys:
+            try:
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": "[SYSTEM: Generate an unprompted bored message. No greeting. Just a random thought.]"}
+                ]
+                chosen_model = random.choice(self.silicon_models)
+                raw_text = await self._get_silicon_response(messages, model=chosen_model, temperature=1.0)
+                if raw_text:
+                    return self._sanitize_output(raw_text)
+            except Exception as e:
+                print(f"SiliconFlow unprompted generation failed: {e}. Falling back to Cerebras/Gemini.")
+
         if self.cerebras_keys:
             try:
                 messages = [
@@ -902,6 +1111,19 @@ INSTRUCTIONS:
         system_prompt = self._get_base_prompt()
         system_prompt += "\n[CONTEXT: INSTAGRAM STORY]\nYou are posting a picture to your story. Write a tiny, 1-4 word caption (lowercase). Examples: 'finally', 'so bored', 'food', 'night', 'tired af', 'why am i awake'.\nCRITICAL: You MUST include `[fetch_web: selfie]` or `[fetch_web: aesthetic]` or `[fetch_web: food]` at the end of your caption to attach an image. NO other text.\n"
         
+        if self.silicon_keys:
+            try:
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": "[SYSTEM: Generate a story caption with a fetch_web tag.]"}
+                ]
+                chosen_model = random.choice(self.silicon_models)
+                raw_text = await self._get_silicon_response(messages, model=chosen_model, temperature=1.0)
+                if raw_text:
+                    return self._sanitize_output(raw_text)
+            except Exception as e:
+                print(f"SiliconFlow story generation failed: {e}. Falling back to Cerebras/Gemini.")
+
         if self.cerebras_keys:
             try:
                 messages = [
