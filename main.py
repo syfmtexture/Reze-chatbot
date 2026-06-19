@@ -1118,10 +1118,7 @@ async def send_abandonment_announcements():
             configs = await db.get_all_server_configs()
             
             message_text = (
-                """Hi everyone. so uh, this is v4, which is the last update i'm getting. 
-                my dev has abandoned this repository and won't be updating me anymore. 
-                i'll still be here hanging out in the channel if u want to talk, but yeah, no new updates or features after this.
-                just wanted to let y'all know ig haha."""
+                """**Hi everyone. so uh, this is v4, which is the last update i'm getting. my dev has abandoned this repository and won't be updating me anymore. i'll still be here hanging out in the channel if u want to talk, but yeah, no new updates or features after this.just wanted to let y'all know ig haha.**"""
             )
             
             for config in configs:
